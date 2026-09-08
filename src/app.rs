@@ -1034,6 +1034,46 @@ impl eframe::App for FileSearchApp {
                 action
             }
 
+            // クリック＆ドラッグを単一レスポンスで確実に判定・処理する選択可能ラベル
+            fn selectable_item_with_drag(
+                ui: &mut egui::Ui,
+                selected: bool,
+                text: RichText,
+            ) -> egui::Response {
+                let button_padding = ui.spacing().button_padding;
+                let total_extra = button_padding + button_padding;
+                let wrap_width = (ui.available_width() - total_extra.x).max(0.0);
+                let widget_text: egui::WidgetText = text.into();
+                let galley = widget_text.into_galley(ui, None, wrap_width, egui::TextStyle::Button);
+
+                let mut desired_size = total_extra + galley.size();
+                desired_size.y = desired_size.y.max(ui.spacing().interact_size.y);
+                let (rect, response) = ui.allocate_at_least(desired_size, Sense::click_and_drag());
+
+                if ui.is_rect_visible(response.rect) {
+                    let text_pos = ui
+                        .layout()
+                        .align_size_within_rect(galley.size(), rect.shrink2(button_padding))
+                        .min;
+
+                    let visuals = ui.style().interact_selectable(&response, selected);
+
+                    if selected || response.hovered() || response.highlighted() {
+                        let rect = rect.expand(visuals.expansion);
+                        ui.painter().rect(
+                            rect,
+                            visuals.rounding,
+                            visuals.weak_bg_fill,
+                            visuals.bg_stroke,
+                        );
+                    }
+
+                    ui.painter().galley(text_pos, galley, visuals.text_color());
+                }
+
+                response
+            }
+
             let mut pending_action: Option<TableAction> = None;
             let selected_paths = &self.selected_paths;
             // 表示順を保った選択一覧。まとめて操作するときの対象になる。
@@ -1067,6 +1107,19 @@ impl eframe::App for FileSearchApp {
                                 FileSearchApp::folder_path_of(&entry.path, entry.is_dir);
 
                             ui.push_id(i, |ui| {
+                                // 選択行全体の背景を上品にハイライト
+                                if is_selected {
+                                    let row_rect = egui::Rect::from_min_size(
+                                        ui.cursor().min,
+                                        egui::vec2(ui.available_width(), ROW_HEIGHT),
+                                    );
+                                    ui.painter().rect_filled(
+                                        row_rect,
+                                        2.0,
+                                        Color32::from_rgba_unmultiplied(40, 75, 120, 85),
+                                    );
+                                }
+
                                 ui.horizontal(|ui| {
                                     let mut row_drag_started = false;
                                     // ===== 左ペイン：コピー / アイコン / ファイル名 / 更新日時 =====
@@ -1087,7 +1140,7 @@ impl eframe::App for FileSearchApp {
                                                     ));
                                             }
 
-                                            let icon = if entry.is_dir {
+                                             let icon = if entry.is_dir {
                                                 "\u{1F4C1}"
                                             } else {
                                                 "\u{1F4C4}"
@@ -1114,27 +1167,21 @@ impl eframe::App for FileSearchApp {
                                                             egui::Align::Center,
                                                         ),
                                                         |ui| {
-                                                            let name_label = ui.add(
-                                                                egui::SelectableLabel::new(
-                                                                    is_selected,
-                                                                    RichText::new(&entry.file_name)
-                                                                        .strong()
-                                                                        .color(if entry.is_dir {
-                                                                            Color32::from_rgb(
-                                                                                255, 215, 100,
-                                                                            )
-                                                                        } else {
-                                                                            Color32::WHITE
-                                                                        }),
-                                                                ),
+                                                            let name_label = selectable_item_with_drag(
+                                                                ui,
+                                                                is_selected,
+                                                                RichText::new(&entry.file_name)
+                                                                    .strong()
+                                                                    .color(if entry.is_dir {
+                                                                        Color32::from_rgb(
+                                                                            255, 215, 100,
+                                                                        )
+                                                                    } else {
+                                                                        Color32::WHITE
+                                                                    }),
                                                             );
 
-                                                            let name_drag = ui.interact(
-                                                                name_label.rect,
-                                                                name_label.id.with("drag"),
-                                                                Sense::drag(),
-                                                            );
-                                                            if name_drag.drag_started() {
+                                                            if name_label.drag_started() {
                                                                 row_drag_started = true;
                                                             }
 
