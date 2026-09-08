@@ -7,6 +7,7 @@ mod font;
 mod query;
 mod scanner;
 mod search_worker;
+pub mod drag_drop;
 
 use app::FileSearchApp;
 use eframe::egui::Vec2;

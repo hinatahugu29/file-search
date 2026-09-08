@@ -1068,6 +1068,7 @@ impl eframe::App for FileSearchApp {
 
                             ui.push_id(i, |ui| {
                                 ui.horizontal(|ui| {
+                                    let mut row_drag_started = false;
                                     // ===== 左ペイン：コピー / アイコン / ファイル名 / 更新日時 =====
                                     ui.allocate_ui_with_layout(
                                         egui::vec2(pane_width, 20.0),
@@ -1127,6 +1128,15 @@ impl eframe::App for FileSearchApp {
                                                                         }),
                                                                 ),
                                                             );
+
+                                                            let name_drag = ui.interact(
+                                                                name_label.rect,
+                                                                name_label.id.with("drag"),
+                                                                Sense::drag(),
+                                                            );
+                                                            if name_drag.drag_started() {
+                                                                row_drag_started = true;
+                                                            }
 
                                                             if name_label.clicked() {
                                                                 let modifiers = ui.input(
@@ -1188,9 +1198,24 @@ impl eframe::App for FileSearchApp {
                                                     .color(Color32::from_rgb(165, 175, 190)),
                                             )
                                             .truncate()
-                                            .sense(Sense::click()),
+                                            .sense(Sense::click_and_drag()),
                                         )
                                         .on_hover_text(&entry.path);
+
+                                    if path_label.drag_started() {
+                                        row_drag_started = true;
+                                    }
+
+                                    if row_drag_started {
+                                        let drag_paths: Vec<&str> = if is_selected
+                                            && !visible_selected.is_empty()
+                                        {
+                                            visible_selected.clone()
+                                        } else {
+                                            vec![entry.path.as_str()]
+                                        };
+                                        crate::drag_drop::start_drag(&drag_paths);
+                                    }
 
                                     if path_label.clicked() {
                                         let modifiers = ui.input(|input| input.modifiers);
