@@ -1,0 +1,1050 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>高速ファイル検索アプリ (Fast File Search) 操作マニュアル</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-main: #0f1117;
+      --bg-panel: #181a1f;
+      --bg-card: #20232b;
+      --bg-card-hover: #282c37;
+      --border-color: #2e3340;
+      --border-focus: #3b82f6;
+      
+      --text-main: #f3f4f6;
+      --text-muted: #9ca3af;
+      --text-dark: #6b7280;
+
+      --accent-blue: #3b82f6;
+      --accent-blue-light: #60a5fa;
+      --accent-cyan: #06b6d4;
+      --accent-yellow: #fbbf24;
+      --accent-green: #10b981;
+      --accent-red: #ef4444;
+      --accent-purple: #8b5cf6;
+
+      --font-sans: 'Inter', 'Noto Sans JP', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      --font-mono: 'JetBrains Mono', Consolas, "Courier New", monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background-color: var(--bg-main);
+      color: var(--text-main);
+      line-height: 1.65;
+      padding: 0;
+      margin: 0;
+      font-size: 15px;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* レイアウト構造 */
+    .layout-container {
+      display: flex;
+      min-height: 100vh;
+    }
+
+    /* サイドバー目次 */
+    .toc-sidebar {
+      width: 280px;
+      background-color: var(--bg-panel);
+      border-right: 1px solid var(--border-color);
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow-y: auto;
+      padding: 24px 16px;
+      flex-shrink: 0;
+    }
+
+    .toc-title {
+      font-size: 0.85rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-dark);
+      margin-bottom: 12px;
+      padding-left: 12px;
+    }
+
+    .toc-nav ul {
+      list-style: none;
+    }
+
+    .toc-nav li {
+      margin-bottom: 4px;
+    }
+
+    .toc-nav a {
+      display: block;
+      color: var(--text-muted);
+      text-decoration: none;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 0.9rem;
+      font-weight: 500;
+      transition: all 0.15s ease;
+    }
+
+    .toc-nav a:hover {
+      color: var(--text-main);
+      background-color: rgba(255, 255, 255, 0.05);
+    }
+
+    .toc-nav a.active {
+      color: var(--accent-blue-light);
+      background-color: rgba(59, 130, 246, 0.12);
+      font-weight: 600;
+    }
+
+    /* メインコンテンツ */
+    .main-content {
+      flex: 1;
+      max-width: 980px;
+      padding: 48px 40px 100px 40px;
+      margin: 0 auto;
+    }
+
+    /* ヘッダー・ヒーロー */
+    .hero-header {
+      margin-bottom: 48px;
+      padding-bottom: 32px;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 9999px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      margin-bottom: 16px;
+    }
+
+    .badge-rust {
+      background: rgba(249, 115, 22, 0.15);
+      color: #fb923c;
+      border: 1px solid rgba(249, 115, 22, 0.3);
+    }
+
+    .badge-blue {
+      background: rgba(59, 130, 246, 0.15);
+      color: var(--accent-blue-light);
+      border: 1px solid rgba(59, 130, 246, 0.3);
+    }
+
+    .hero-title {
+      font-size: 2.25rem;
+      font-weight: 800;
+      line-height: 1.25;
+      letter-spacing: -0.02em;
+      margin-bottom: 12px;
+      background: linear-gradient(135deg, #ffffff 0%, #94a3b8 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .hero-subtitle {
+      font-size: 1.1rem;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
+    /* セクション見出し */
+    section {
+      margin-bottom: 56px;
+      scroll-margin-top: 32px;
+    }
+
+    h2 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      margin-bottom: 20px;
+      color: #ffffff;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    h3 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 24px 0 12px 0;
+      color: #e2e8f0;
+    }
+
+    p {
+      margin-bottom: 16px;
+      color: #cbd5e1;
+    }
+
+    /* カードコンテナ */
+    .card {
+      background-color: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+
+    .card-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .feature-card {
+      background-color: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      padding: 20px;
+      transition: transform 0.2s, border-color 0.2s;
+    }
+
+    .feature-card:hover {
+      border-color: var(--accent-blue);
+      transform: translateY(-2px);
+    }
+
+    .feature-icon {
+      font-size: 1.5rem;
+      margin-bottom: 12px;
+      display: inline-block;
+    }
+
+    .feature-card h4 {
+      font-size: 1.05rem;
+      font-weight: 600;
+      margin-bottom: 8px;
+      color: #ffffff;
+    }
+
+    .feature-card p {
+      font-size: 0.9rem;
+      color: var(--text-muted);
+      margin-bottom: 0;
+    }
+
+    /* UIモックアップ図 */
+    .ui-mockup {
+      background: var(--bg-panel);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      overflow: hidden;
+      margin: 24px 0;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    }
+
+    .mockup-header {
+      background: #121418;
+      padding: 10px 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .mockup-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
+    .dot-red { background: #ff5f56; }
+    .dot-yellow { background: #ffbd2e; }
+    .dot-green { background: #27c93f; }
+
+    .mockup-title {
+      font-size: 0.8rem;
+      color: var(--text-dark);
+      margin-left: 8px;
+      font-family: var(--font-mono);
+    }
+
+    .mockup-body {
+      padding: 16px;
+      font-family: var(--font-sans);
+    }
+
+    .mockup-top-bar {
+      background: #1f2229;
+      padding: 12px;
+      border-radius: 8px;
+      margin-bottom: 12px;
+      border: 1px dashed #3b4252;
+    }
+
+    .mockup-flex-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+      flex-wrap: wrap;
+    }
+
+    .mockup-flex-row:last-child {
+      margin-bottom: 0;
+    }
+
+    .mockup-tag {
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      background: #2b303c;
+      color: #93c5fd;
+      border: 1px solid #3b4252;
+    }
+
+    .mockup-input {
+      background: #15171c;
+      border: 1px solid #3e4451;
+      padding: 4px 10px;
+      border-radius: 4px;
+      font-size: 0.8rem;
+      color: #94a3b8;
+      flex: 1;
+    }
+
+    .mockup-btn {
+      background: #2b303c;
+      border: 1px solid #475569;
+      padding: 4px 10px;
+      border-radius: 4px;
+      font-size: 0.8rem;
+      color: #e2e8f0;
+      cursor: default;
+    }
+
+    .mockup-btn-primary {
+      background: #1e3a8a;
+      border-color: #3b82f6;
+      color: #93c5fd;
+    }
+
+    .mockup-main {
+      display: flex;
+      gap: 12px;
+      height: 220px;
+    }
+
+    .mockup-sidebar {
+      width: 180px;
+      background: #1a1d24;
+      border: 1px dashed #3b4252;
+      border-radius: 8px;
+      padding: 10px;
+      font-size: 0.75rem;
+      color: #94a3b8;
+    }
+
+    .mockup-table {
+      flex: 1;
+      background: #1a1d24;
+      border: 1px dashed #3b4252;
+      border-radius: 8px;
+      padding: 10px;
+      font-size: 0.75rem;
+      color: #cbd5e1;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .mockup-table-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 8px;
+      background: #222630;
+      border-radius: 4px;
+    }
+
+    /* コード・キーボード表記 */
+    code {
+      font-family: var(--font-mono);
+      background-color: rgba(255, 255, 255, 0.08);
+      color: #e2e8f0;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 0.9em;
+    }
+
+    kbd {
+      font-family: var(--font-mono);
+      background-color: #272a34;
+      color: #f1f5f9;
+      border: 1px solid #475569;
+      border-bottom: 2px solid #334155;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 0.85em;
+      box-shadow: 0 1px 1px rgba(0,0,0,0.2);
+    }
+
+    /* テーブルデザイン */
+    .manual-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 16px 0 24px 0;
+      font-size: 0.92rem;
+    }
+
+    .manual-table th,
+    .manual-table td {
+      padding: 12px 14px;
+      border: 1px solid var(--border-color);
+      text-align: left;
+    }
+
+    .manual-table th {
+      background-color: #1e2129;
+      color: #f8fafc;
+      font-weight: 600;
+    }
+
+    .manual-table tr:nth-child(even) {
+      background-color: rgba(255, 255, 255, 0.02);
+    }
+
+    .manual-table tr:hover {
+      background-color: rgba(255, 255, 255, 0.04);
+    }
+
+    /* アラート / コールアウト */
+    .callout {
+      padding: 16px 18px;
+      border-radius: 8px;
+      margin: 16px 0;
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+      border-left: 4px solid;
+    }
+
+    .callout-tip {
+      background-color: rgba(16, 185, 129, 0.1);
+      border-color: var(--accent-green);
+      color: #a7f3d0;
+    }
+
+    .callout-info {
+      background-color: rgba(59, 130, 246, 0.1);
+      border-color: var(--accent-blue);
+      color: #bfdbfe;
+    }
+
+    .callout-warn {
+      background-color: rgba(245, 158, 11, 0.1);
+      border-color: var(--accent-yellow);
+      color: #fde68a;
+    }
+
+    .callout-icon {
+      font-size: 1.25rem;
+      line-height: 1;
+    }
+
+    .callout-content {
+      font-size: 0.92rem;
+      line-height: 1.5;
+    }
+
+    .callout-content p:last-child {
+      margin-bottom: 0;
+    }
+
+    /* クエリ例ハイライト */
+    .query-box {
+      background-color: #12141a;
+      border: 1px solid #2d3342;
+      border-radius: 8px;
+      padding: 14px 18px;
+      margin: 12px 0;
+      font-family: var(--font-mono);
+      font-size: 0.95rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .query-text {
+      color: #38bdf8;
+    }
+
+    .query-desc {
+      color: #94a3b8;
+      font-size: 0.85rem;
+      font-family: var(--font-sans);
+    }
+
+    /* ステップバイステップ番号リスト */
+    .step-list {
+      list-style: none;
+      counter-reset: step-counter;
+      margin: 20px 0;
+    }
+
+    .step-item {
+      position: relative;
+      padding-left: 48px;
+      margin-bottom: 24px;
+    }
+
+    .step-number {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: var(--accent-blue);
+      color: #ffffff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 0.9rem;
+    }
+
+    .step-title {
+      font-size: 1.1rem;
+      font-weight: 600;
+      margin-bottom: 6px;
+      color: #ffffff;
+    }
+
+    /* フッター */
+    footer {
+      margin-top: 80px;
+      padding-top: 24px;
+      border-top: 1px solid var(--border-color);
+      color: var(--text-dark);
+      font-size: 0.85rem;
+      text-align: center;
+    }
+
+    /* レスポンシブ */
+    @media (max-width: 900px) {
+      .layout-container {
+        flex-direction: column;
+      }
+      .toc-sidebar {
+        width: 100%;
+        height: auto;
+        position: relative;
+        border-right: none;
+        border-bottom: 1px solid var(--border-color);
+      }
+      .main-content {
+        padding: 32px 20px;
+      }
+    }
+  </style>
+</head>
+<body>
+
+<div class="layout-container">
+  <!-- 目次サイドバー -->
+  <aside class="toc-sidebar">
+    <div class="toc-title">目次</div>
+    <nav class="toc-nav">
+      <ul>
+        <li><a href="#overview">1. はじめに・特徴</a></li>
+        <li><a href="#ui-layout">2. 画面構成と各部名称</a></li>
+        <li><a href="#basic-flow">3. 基本的な使い方</a></li>
+        <li><a href="#search-syntax">4. 高度な検索クエリ仕様</a></li>
+        <li><a href="#scan-control">5. スキャン制御（一時停止・再開）</a></li>
+        <li><a href="#sidebar-management">6. お気に入り＆履歴の活用</a></li>
+        <li><a href="#context-actions">7. ファイル操作＆右クリック</a></li>
+        <li><a href="#sorting-options">8. 並び替え（ソート機能）</a></li>
+        <li><a href="#faq-troubleshooting">9. よくある質問・設定情報</a></li>
+      </ul>
+    </nav>
+  </aside>
+
+  <!-- メインコンテンツ -->
+  <main class="main-content">
+    
+    <!-- ヒーローヘッダー -->
+    <header class="hero-header">
+      <div style="display: flex; gap: 8px;">
+        <span class="badge badge-rust">⚡ Rust + Rayon + egui</span>
+        <span class="badge badge-blue">Windows Native 最適化</span>
+      </div>
+      <h1 class="hero-title">高速ファイル検索 (Fast File Search) 操作マニュアル</h1>
+      <p class="hero-subtitle">
+        指定した親フォルダ配下を爆速で並列走査し、メモリ上から数万〜数十万件のファイルを瞬時にインクリメンタル絞り込みする超軽量デスクトップ検索ツールです。
+      </p>
+    </header>
+
+    <!-- 1. はじめに・特徴 -->
+    <section id="overview">
+      <h2>🚀 1. はじめに・特徴</h2>
+      <p>
+        Windows標準の検索機能で起きがちな「検索が遅い」「インデックスが不安定」「思うように引っかからない」という課題を根本から解決するために開発されました。
+      </p>
+
+      <div class="card-grid">
+        <div class="feature-card">
+          <div class="feature-icon">⚡</div>
+          <h4>並列走査 ＆ ストリーミング</h4>
+          <p>Rayonによるマルチスレッド並列走査を採用。スキャン完了を待たずに、見つかったファイルから即座に画面へ反映されリアルタイム検索が可能です。</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">🧠</div>
+          <h4>インメモリ・非同期検索</h4>
+          <p>走査したファイル群をメモリにキャッシュし、バックグラウンドの検索ワーカースレッドで探索。GUI描画を一切ブロックせず、入力レスポンスは常に軽快です。</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">🔍</div>
+          <h4>日本語・AND / OR / NOT 完全対応</h4>
+          <p>全角スペースも半角として扱い、大文字小文字を自動正規化。スペースでAND、<code>|</code>でOR、<code>!</code>や<code>-</code>で除外検索が自由自在です。</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">📋</div>
+          <h4>実務直結のワンクリック操作</h4>
+          <p>各行左端の「📋」ボタンで瞬時にパスをクリップボードにコピー可能。エクスプローラー連携や対象フォルダの深掘り検索も即座に行えます。</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 2. 画面構成と各部名称 -->
+    <section id="ui-layout">
+      <h2>🖥️ 2. 画面構成と各部名称</h2>
+      <p>直感的で無駄のない3ペイン構成（上部操作バー・左サイドバー・中央結果テーブル）となっています。</p>
+
+      <!-- UIモックアップ -->
+      <div class="ui-mockup">
+        <div class="mockup-header">
+          <span class="mockup-dot dot-red"></span>
+          <span class="mockup-dot dot-yellow"></span>
+          <span class="mockup-dot dot-green"></span>
+          <span class="mockup-title">高速ファイル検索 - Fast File Search (Rust)</span>
+        </div>
+        <div class="mockup-body">
+          <!-- 上部バー -->
+          <div class="mockup-top-bar">
+            <div class="mockup-flex-row">
+              <span class="mockup-btn">◀ サイドバー</span>
+              <span class="mockup-tag">📁 検索対象:</span>
+              <div class="mockup-input">D:\Projects\MyApp</div>
+              <span class="mockup-btn">📂 参照...</span>
+              <span class="mockup-btn">☆ お気に入り</span>
+              <span class="mockup-btn mockup-btn-primary">🔄 再スキャン</span>
+            </div>
+            <div class="mockup-flex-row" style="margin-top: 8px;">
+              <span class="mockup-tag" style="color: #60a5fa;">🔍 検索:</span>
+              <div class="mockup-input" style="color: #38bdf8; font-weight: bold;">main rs | toml !target</div>
+            </div>
+          </div>
+
+          <!-- メイン領域 -->
+          <div class="mockup-main">
+            <!-- 左サイドバー -->
+            <div class="mockup-sidebar">
+              <div style="color: #fbbf24; font-weight: bold; margin-bottom: 6px;">⭐ お気に入り</div>
+              <div style="background: #2b303c; padding: 3px 6px; border-radius: 4px; margin-bottom: 4px;">📁 WebApp_Core</div>
+              <div style="padding: 3px 6px; margin-bottom: 12px;">📁 Documents</div>
+              <div style="color: #93c5fd; font-weight: bold; margin-bottom: 6px;">🕒 検索履歴</div>
+              <div style="padding: 2px 4px;">📂 MyApp</div>
+              <div style="padding: 2px 4px;">📂 RustProjects</div>
+            </div>
+
+            <!-- 右テーブル -->
+            <div class="mockup-table">
+              <div style="display: flex; justify-content: space-between; color: #94a3b8; border-bottom: 1px solid #334155; padding-bottom: 4px;">
+                <span>⚡ 走査完了 ヒット件数: 3 件 / 読込済: 1,240 件 (走査: 24 ms)</span>
+              </div>
+              <div style="display: flex; gap: 8px; font-weight: bold; color: #f1f5f9; padding: 2px 0;">
+                <span style="width: 24px;">📋</span>
+                <span style="flex: 1;">📄 ファイル名 ▼</span>
+                <span style="width: 140px;">📅 更新日時 ↕</span>
+                <span style="flex: 1.5;">📂 パス ↕</span>
+              </div>
+              <div class="mockup-table-row">
+                <span class="mockup-btn" style="padding: 1px 4px; font-size: 0.7rem;">📋</span>
+                <span style="flex: 1; color: #fff; font-weight: bold;">📄 main.rs</span>
+                <span style="width: 140px; color: #94a3b8;">2026/08/27 14:00:00</span>
+                <span style="flex: 1.5; color: #64748b;">D:\Projects\MyApp\src\main.rs</span>
+              </div>
+              <div class="mockup-table-row">
+                <span class="mockup-btn" style="padding: 1px 4px; font-size: 0.7rem;">📋</span>
+                <span style="flex: 1; color: #fff; font-weight: bold;">📄 Cargo.toml</span>
+                <span style="width: 140px; color: #94a3b8;">2026/08/27 13:50:12</span>
+                <span style="flex: 1.5; color: #64748b;">D:\Projects\MyApp\Cargo.toml</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <table class="manual-table">
+        <thead>
+          <tr>
+            <th>エリア</th>
+            <th>主な構成要素</th>
+            <th>説明</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>上部操作バー</strong></td>
+            <td>フォルダ入力、参照、お気に入り、スキャン制御、検索バー</td>
+            <td>検索対象となる親ディレクトリの指定とキーワード入力を行うメインコントロールです。</td>
+          </tr>
+          <tr>
+            <td><strong>左サイドバー</strong></td>
+            <td>⭐ お気に入りフォルダ、🕒 検索履歴、開閉ボタン</td>
+            <td>よく使うフォルダや過去にスキャンしたフォルダにワンクリックで切り替え可能です。</td>
+          </tr>
+          <tr>
+            <td><strong>メイン一覧領域</strong></td>
+            <td>サマリー情報、ソートヘッダー、検索結果テーブル</td>
+            <td>ファイル名・更新日時・パスの一覧。ヘッダークリックで即時並び替えが可能です。</td>
+          </tr>
+          <tr>
+            <td><strong>下部ステータスバー</strong></td>
+            <td>ステータス文言、トースト通知</td>
+            <td>走査状況（スキャン中/一時停止/完了/エラー）や操作完了メッセージ（コピー通知など）を表示します。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- 3. 基本的な使い方 -->
+    <section id="basic-flow">
+      <h2>📖 3. 基本的な使い方</h2>
+
+      <ol class="step-list">
+        <li class="step-item">
+          <div class="step-number">1</div>
+          <div class="step-title">検索対象の親フォルダを指定する</div>
+          <p>
+            画面上部の「📁 検索対象」欄にパスを直接入力するか、右側の「<strong>📂 参照...</strong>」ボタンを押して検索したいフォルダ（プロジェクトフォルダや作業ディレクトリなど）を選択します。<br>
+            ※ サイドバーの「お気に入り」や「検索履歴」をクリックすることでも即座に対象を切り替えられます。
+          </p>
+        </li>
+
+        <li class="step-item">
+          <div class="step-number">2</div>
+          <div class="step-title">バックグラウンド走査が自動開始</div>
+          <p>
+            フォルダが指定されると自動的に並列走査がスタートします。<br>
+            <strong>走査の完了を待つ必要はありません。</strong> 読み込まれたファイルから順次メモリに登録され、即座に検索が可能です。
+          </p>
+        </li>
+
+        <li class="step-item">
+          <div class="step-number">3</div>
+          <div class="step-title">「🔍 検索」バーにキーワードを入力</div>
+          <p>
+            検索バーに探したい単語を入力すると、キーを叩くたびにリアルタイムで候補が絞り込まれます。<br>
+            IMEの確定Enterキーを押してもフォーカスが外れない設計になっているため、日本語入力もストレスなく行えます。
+          </p>
+        </li>
+
+        <li class="step-item">
+          <div class="step-number">4</div>
+          <div class="step-title">ファイルを開く / パスをコピーする</div>
+          <p>
+            目的のファイルが見つかったら、以下のいずれかの操作を行います：
+          </p>
+          <ul style="margin-left: 20px; color: #cbd5e1;">
+            <li><strong>左端の「📋」ボタン</strong>：フルパスをクリップボードにコピー</li>
+            <li><strong>ダブルクリック</strong>：既定のアプリケーションでファイルを開く</li>
+            <li><strong>右クリック</strong>：エクスプローラーで表示、親フォルダの再検索など</li>
+          </ul>
+        </li>
+      </ol>
+    </section>
+
+    <!-- 4. 高度な検索クエリ仕様 -->
+    <section id="search-syntax">
+      <h2>⚡ 4. 高度な検索クエリ仕様</h2>
+      <p>
+        検索クエリエンジンは強力な構文解析を備えており、大文字小文字の区別なく、スペースや記号を組み合わせた柔軟な絞り込みが可能です。
+      </p>
+
+      <table class="manual-table">
+        <thead>
+          <tr>
+            <th>検索モード</th>
+            <th>構文・記号</th>
+            <th>クエリ入力例</th>
+            <th>動作とマッチング条件</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>AND検索</strong></td>
+            <td><code>スペース</code> / <code>全角空白</code></td>
+            <td><code>Rust 2026 PDF</code></td>
+            <td>入力したすべての単語を含む項目に絞り込みます（全角スペースも自動的にAND扱いとなります）。</td>
+          </tr>
+          <tr>
+            <td><strong>OR検索</strong></td>
+            <td><code>|</code> （パイプ記号）</td>
+            <td><code>png|jpg|webp</code></td>
+            <td>いずれかの単語が含まれている項目がヒットします。拡張子の一括絞り込みなどに最適です。</td>
+          </tr>
+          <tr>
+            <td><strong>NOT（除外）検索</strong></td>
+            <td><code>!</code> または <code>-</code></td>
+            <td><code>!node_modules -target</code></td>
+            <td>指定した単語を含むファイル・パスを除外します。ノイズとなるフォルダを省く際に有効です。</td>
+          </tr>
+          <tr>
+            <td><strong>パス指定検索</strong></td>
+            <td><code>/</code> または <code>\</code> を含む単語</td>
+            <td><code>src/ query</code></td>
+            <td>スラッシュまたはバックスラッシュを含む単語は、ファイル名だけでなく<strong>親フォルダパス全体</strong>を対象にマッチングします。</td>
+          </tr>
+          <tr>
+            <td><strong>複合検索</strong></td>
+            <td>上記すべての組み合わせ</td>
+            <td><code>report 2026 pdf|xlsx !draft</code></td>
+            <td>「report」かつ「2026」を含み、「pdf または xlsx」のいずれかであり、「draft」を含まない項目を絞り込みます。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>💡 実践クエリ例</h3>
+
+      <div class="query-box">
+        <span class="query-text">rust cargo | toml</span>
+        <span class="query-desc">「rust」を含み、かつ「cargo または toml」を含むファイル</span>
+      </div>
+
+      <div class="query-box">
+        <span class="query-text">design !png !jpg</span>
+        <span class="query-desc">「design」を含み、PNG画像とJPG画像を除外した一覧</span>
+      </div>
+
+      <div class="query-box">
+        <span class="query-text">src\ components | views</span>
+        <span class="query-desc">srcフォルダ配下の components または views にあるファイル</span>
+      </div>
+
+      <div class="callout callout-tip">
+        <span class="callout-icon">💡</span>
+        <div class="callout-content">
+          <strong>大文字・小文字は完全自動無視</strong><br>
+          <code>PDF</code> と入力しても <code>pdf</code> と入力しても同一視されます。全角英数や全角スペースも内部で自動的に正規化されます。
+        </div>
+      </div>
+    </section>
+
+    <!-- 5. スキャン制御 -->
+    <section id="scan-control">
+      <h2>⏸️ 5. スキャン制御（一時停止・再開・最初から）</h2>
+      <p>
+        膨大なファイルが存在するフォルダをスキャンする際、状況に合わせて柔軟に走査をコントロールできます。
+      </p>
+
+      <div class="card-grid">
+        <div class="feature-card">
+          <h4 style="color: #f87171;">⏸ 一時停止 (Pause)</h4>
+          <p>
+            走査中のバックグラウンドスレッドを即座に休止させます。<br>
+            <strong>一時停止中も、それまでに読み込まれたファイルを使って自由に検索・ソート・コピーが可能です。</strong> ディスク負荷を一時的に下げたい時に便利です。
+          </p>
+        </div>
+
+        <div class="feature-card">
+          <h4 style="color: #4ade80;">▶ 再開 (Resume)</h4>
+          <p>
+            一時停止していた地点から、即座に走査を再開します。最初からやり直す必要はありません。
+          </p>
+        </div>
+
+        <div class="feature-card">
+          <h4 style="color: #60a5fa;">🔄 最初から / 再スキャン</h4>
+          <p>
+            現在のキャッシュをすべて破棄し、指定フォルダを最初からクリーンに再走査します。ファイルの追加・削除があった場合に使用します。
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 6. お気に入り＆履歴の活用 -->
+    <section id="sidebar-management">
+      <h2>⭐ 6. お気に入り＆検索履歴の活用</h2>
+      <p>
+        画面左側のサイドバーでは、頻繁に利用するフォルダへの素早いアクセスをサポートします。
+      </p>
+
+      <h3>⭐ お気に入りフォルダの登録・削除</h3>
+      <ul style="margin-left: 20px; margin-bottom: 16px; color: #cbd5e1;">
+        <li><strong>追加方法</strong>：検索対象フォルダを指定した状態で、上部バーの「<strong>☆ お気に入り</strong>」ボタンをクリック（登録されると「⭐ 登録済」に変化します）。</li>
+        <li><strong>呼び出し</strong>：サイドバーのお気に入り一覧からフォルダ名をクリックするだけで、即座に対象が切り替わり走査・検索が開始されます。</li>
+        <li><strong>削除方法</strong>：各お気に入り項目の右端にある「<strong>✕</strong>」ボタンをクリックします。</li>
+      </ul>
+
+      <h3>🕒 検索履歴</h3>
+      <ul style="margin-left: 20px; margin-bottom: 16px; color: #cbd5e1;">
+        <li>過去にスキャンしたフォルダが最大15件まで自動的に記録されます。</li>
+        <li>履歴をクリックすれば即座にそのフォルダを再検索できます。</li>
+        <li>履歴をリフレッシュしたい場合は、セクション右側の「<strong>🗑 クリア</strong>」ボタンを押します。</li>
+      </ul>
+
+      <div class="callout callout-info">
+        <span class="callout-icon">ℹ️</span>
+        <div class="callout-content">
+          <strong>サイドバーの開閉</strong><br>
+          画面左上の「<strong>◀ サイドバー</strong>」ボタンを押すことで、サイドバーを折りたたんで検索テーブルを全画面に広げることができます。状態はアプリ終了後も自動保存されます。
+        </div>
+      </div>
+    </section>
+
+    <!-- 7. ファイル操作＆右クリック -->
+    <section id="context-actions">
+      <h2>🖱️ 7. ファイル操作＆右クリックメニュー</h2>
+      <p>
+        検索結果の行に対して、多彩なマウスアクションが用意されています。
+      </p>
+
+      <table class="manual-table">
+        <thead>
+          <tr>
+            <th>操作</th>
+            <th>機能・動作</th>
+            <th>詳細</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>「📋」ボタン クリック</strong></td>
+            <td>ワンクリック パスコピー</td>
+            <td>各行の左端にあるクリップボードアイコンをクリックすると、その項目のフルパスが即座にコピーされます（トースト通知が表示されます）。</td>
+          </tr>
+          <tr>
+            <td><strong>項目を左クリック</strong></td>
+            <td>行の選択</td>
+            <td>該当行をハイライト選択します。</td>
+          </tr>
+          <tr>
+            <td><strong>項目をダブルクリック</strong></td>
+            <td>ファイル/フォルダを開く</td>
+            <td>Windowsの関連付けに従い、既定のエディタやアプリで開きます。</td>
+          </tr>
+          <tr>
+            <td><strong>右クリックメニュー</strong></td>
+            <td>コンテキストメニュー表示</td>
+            <td>
+              以下の専用メニューが表示されます：
+              <ul style="margin-left: 16px; margin-top: 4px;">
+                <li><code>🔍 このフォルダ内を検索対象に</code>（※フォルダの場合のみ：このフォルダを親として即座に再スキャン）</li>
+                <li><code>▶ 開く</code>（既定のアプリで開く）</li>
+                <li><code>📂 エクスプローラーで表示</code>（Windowsエクスプローラーで該当ファイルを選択した状態で開く）</li>
+                <li><code>📋 パスをコピー</code>（フルパスをコピー）</li>
+              </ul>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- 8. 並び替え（ソート機能） -->
+    <section id="sorting-options">
+      <h2>🔃 8. 並び替え（ソート機能）</h2>
+      <p>
+        検索結果テーブルのヘッダーをクリックすることで、並び順を瞬時に切り替えられます。
+      </p>
+
+      <div class="card-grid">
+        <div class="feature-card">
+          <h4>📅 更新日時 (デフォルト: 新しい順)</h4>
+          <p>
+            ヘッダーの「📅 更新日時」をクリックすると、<strong>▼ 新しい順</strong> ⇄ <strong>▲ 古い順</strong> が切り替わります。直近で作業したファイルを探す際に最も強力です。
+          </p>
+        </div>
+
+        <div class="feature-card">
+          <h4>📄 ファイル名</h4>
+          <p>
+            ヘッダーの「📄 ファイル名」をクリックすると、<strong>▲ 昇順 (A→Z / あ→ん)</strong> ⇄ <strong>▼ 降順 (Z→A / ん→あ)</strong> が切り替わります。
+          </p>
+        </div>
+
+        <div class="feature-card">
+          <h4>📂 パス名</h4>
+          <p>
+            ヘッダーの「📂 パス」をクリックすると、ディレクトリパス順（階層昇順）に整理して表示します。
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 9. よくある質問・設定情報 -->
+    <section id="faq-troubleshooting">
+      <h2>❓ 9. よくある質問・設定情報</h2>
+
+      <div class="card">
+        <h4 style="color: #ffffff; margin-bottom: 8px;">Q. 設定やお気に入り・履歴データはどこに保存されますか？</h4>
+        <p style="margin-bottom: 8px;">
+          Windowsの標準AppData領域に JSON 形式で自動保存されます：<br>
+          <code>C:\Users\&lt;ユーザー名&gt;\AppData\Roaming\Antigravity\FileSearchApp\config.json</code>
+        </p>
+        <p style="font-size: 0.9rem; color: var(--text-muted); margin-bottom: 0;">
+          ※ アプリを閉じても、最後に開いていたフォルダ、お気に入り、履歴、ソート状態、サイドバー開閉状態がそのまま復元されます。
+        </p>
+      </div>
+
+      <div class="card">
+        <h4 style="color: #ffffff; margin-bottom: 8px;">Q. 大量（数十万件）のファイルをスキャンしても重くなりませんか？</h4>
+        <p style="margin-bottom: 8px;">
+          本アプリは以下の最適化により、大量ファイル時も軽快に動作します：
+        </p>
+        <ul style="margin-left: 20px; font-size: 0.9rem; color: var(--text-muted); margin-bottom: 0;">
+          <li><strong>Windowsネイティブキャッシュ走査</strong>：ファイルメタデータを取得する追加システムコールを抑制。</li>
+          <li><strong>非同期検索ワーカースレッド</strong>：探索とソートをUIスレッドから完全分離。</li>
+          <li><strong>Top-N 部分ソート</strong>：上位件数（デフォルト500件）のみを計算する <code>select_nth_unstable_by</code> を採用。</li>
+          <li><strong>仮想スクロール描画</strong>：画面内に見えている行だけをレンダリング。</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h4 style="color: #ffffff; margin-bottom: 8px;">Q. ファイルの中身（全文検索・Grep）はできますか？</h4>
+        <p style="margin-bottom: 0;">
+          本ツールは<strong>「ファイル名およびパス名による超高速絞り込み」</strong>に特化して極限までチューニングされています。ファイルの中身の検索は行わないため、ディスクやメモリを圧迫せず瞬時の応答が可能です。
+        </p>
+      </div>
+
+      <div class="callout callout-warn">
+        <span class="callout-icon">⚠️</span>
+        <div class="callout-content">
+          <strong>アクセス権限について</strong><br>
+          管理者権限が必要なシステムディレクトリ（<code>C:\Windows\System32</code> 等の一部）はOSによりスキップされる場合があります。その場合、下部ステータスバーに「警告あり」として通知されます。通常のユーザーファイル・作業フォルダは問題なく全走査されます。
+        </div>
+      </div>
+    </section>
+
+    <!-- フッター -->
+    <footer>
+      <p>高速ファイル検索アプリ (Fast File Search Tool) - Built with Rust & egui</p>
+    </footer>
+
+  </main>
+</div>
+
+</body>
+</html>
