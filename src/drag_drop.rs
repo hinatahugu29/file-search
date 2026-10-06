@@ -22,7 +22,7 @@ mod windows_impl {
     };
     use windows::Win32::System::Com::{
         IDataObject, IDataObject_Impl, IEnumFORMATETC, IEnumSTATDATA, IAdviseSink,
-        FORMATETC, STGMEDIUM, TYMED_HGLOBAL,
+        DVASPECT_CONTENT, FORMATETC, STGMEDIUM, TYMED_HGLOBAL,
     };
     use windows::Win32::System::Memory::{
         GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE, GMEM_ZEROINIT,
@@ -31,8 +31,7 @@ mod windows_impl {
         DoDragDrop, IDropSource, IDropSource_Impl, OleInitialize, DROPEFFECT,
         DROPEFFECT_COPY,
     };
-    use windows::Win32::UI::Shell::DROPFILES;
-    use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_ESCAPE, VK_LBUTTON};
+    use windows::Win32::UI::Shell::{SHCreateStdEnumFmtEtc, DROPFILES};
 
     static OLE_INIT: Once = Once::new();
 
@@ -98,7 +97,10 @@ mod windows_impl {
                     return Err(DV_E_FORMATETC.into());
                 }
                 let formatetc = &*pformatetcinst;
-                if formatetc.cfFormat != CF_HDROP || (formatetc.tymed & TYMED_HGLOBAL.0 as u32) == 0 {
+                if formatetc.cfFormat != CF_HDROP
+                    || (formatetc.tymed & TYMED_HGLOBAL.0 as u32) == 0
+                    || (formatetc.dwAspect & DVASPECT_CONTENT.0 as u32) == 0
+                {
                     return Err(DV_E_FORMATETC.into());
                 }
 
@@ -144,8 +146,20 @@ mod windows_impl {
             Err(E_NOTIMPL.into())
         }
 
-        fn EnumFormatEtc(&self, _dwdirection: u32) -> Result<IEnumFORMATETC> {
-            Err(E_NOTIMPL.into())
+        fn EnumFormatEtc(&self, dwdirection: u32) -> Result<IEnumFORMATETC> {
+            // DATADIR_GET(1) 以外は非対応。列挙を返さないドロップ先（エクスプローラー等）が
+            // 受け取りを拒否することがあるため、CF_HDROP を必ず列挙できるようにする。
+            if dwdirection != 1 {
+                return Err(E_NOTIMPL.into());
+            }
+            let formats = [FORMATETC {
+                cfFormat: CF_HDROP,
+                ptd: std::ptr::null_mut(),
+                dwAspect: DVASPECT_CONTENT.0 as u32,
+                lindex: -1,
+                tymed: TYMED_HGLOBAL.0 as u32,
+            }];
+            unsafe { SHCreateStdEnumFmtEtc(&formats) }
         }
 
         fn DAdvise(&self, _pformatetc: *const FORMATETC, _advf: u32, _padvsink: Option<&IAdviseSink>) -> Result<u32> {
@@ -166,17 +180,17 @@ mod windows_impl {
 
     #[allow(non_snake_case)]
     impl IDropSource_Impl for FileDropSource_Impl {
-        fn QueryContinueDrag(&self, fescapepressed: windows::Win32::Foundation::BOOL, _grfkeystate: windows::Win32::System::SystemServices::MODIFIERKEYS_FLAGS) -> HRESULT {
-            unsafe {
-                if fescapepressed.as_bool() || (GetKeyState(VK_ESCAPE.0 as i32) as u16 & 0x8000) != 0 {
-                    return DRAGDROP_S_CANCEL;
-                }
-                // マウス左ボタンが離されたらドロップ実行
-                if (GetKeyState(VK_LBUTTON.0 as i32) as u16 & 0x8000) == 0 {
-                    return DRAGDROP_S_DROP;
-                }
-                S_OK
+        fn QueryContinueDrag(&self, fescapepressed: windows::Win32::Foundation::BOOL, grfkeystate: windows::Win32::System::SystemServices::MODIFIERKEYS_FLAGS) -> HRESULT {
+            // OLE から渡されるキー状態のみで判定する。GetKeyState を使うと
+            // ドラッグ開始直後の状態ずれで即ドロップ/即キャンセルが起きて不安定になる。
+            const MK_LBUTTON: u32 = 0x0001;
+            if fescapepressed.as_bool() {
+                return DRAGDROP_S_CANCEL;
             }
+            if (grfkeystate.0 & MK_LBUTTON) == 0 {
+                return DRAGDROP_S_DROP;
+            }
+            S_OK
         }
 
         fn GiveFeedback(&self, _dweffect: DROPEFFECT) -> HRESULT {

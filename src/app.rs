@@ -15,6 +15,8 @@ use std::time::{Duration, Instant};
 const SCAN_RESULTS_UPDATE_INTERVAL: Duration = Duration::from_millis(150);
 const LARGE_SCAN_RESULTS_UPDATE_INTERVAL: Duration = Duration::from_millis(300);
 const HUGE_SCAN_RESULTS_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
+/// Enter キーで一度に開ける件数の上限
+const OPEN_AT_ONCE_LIMIT: usize = 10;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScanStatus {
@@ -57,6 +59,9 @@ pub struct FileSearchApp {
     scan_control: Option<ScanControl>,
 
     // UI状態
+    // 次フレーム終了後に開始する OLE ドラッグの対象パス
+    pending_drag: Option<Vec<String>>,
+
     // 選択状態。selected_paths が実際の選択集合、selected_path は
     // Shift+クリックの範囲選択の起点（アンカー）を兼ねた「最後に触った行」。
     selected_path: Option<String>,
@@ -120,6 +125,7 @@ impl FileSearchApp {
             rx,
             scan_control: None,
             selected_path: None,
+            pending_drag: None,
             selected_paths: HashSet::new(),
             toast_message: None,
             has_focused_search: false,
@@ -316,6 +322,14 @@ impl FileSearchApp {
         self.toast_message = Some((text.to_string(), std::time::Instant::now()));
     }
 
+    /// パスからファイル名（末尾要素）だけを取り出す。
+    fn file_name_of(path: &str) -> String {
+        Path::new(path)
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.to_string())
+    }
+
     /// ファイルパスから「そのファイルが入っているフォルダ」のパスを返す。
     /// フォルダ自身の場合はそのまま返す（コピペしてそのフォルダを開ける形）。
     fn folder_path_of(path_str: &str, is_dir: bool) -> String {
@@ -446,10 +460,43 @@ impl FileSearchApp {
 "));
     }
 
+    /// 選択中の項目を既定のアプリで開く。Enter キーからの実行に使う。
+    fn open_selected(&mut self) {
+        // 表示順を保った選択一覧。1件も選択が無いときは何もしない。
+        let targets: Vec<String> = self
+            .filtered_indices
+            .iter()
+            .filter_map(|&index| self.cached_entries.get(index))
+            .filter(|entry| self.selected_paths.contains(&entry.path))
+            .map(|entry| entry.path.clone())
+            .collect();
+
+        if targets.is_empty() {
+            return;
+        }
+        // 大量に選択したまま Enter を押したときに、アプリが何十個も
+        // 立ち上がるのを防ぐ。
+        if targets.len() > OPEN_AT_ONCE_LIMIT {
+            self.show_toast(&format!(
+                "{} 件選択されています（Enter で一度に開けるのは {} 件までです）",
+                targets.len(),
+                OPEN_AT_ONCE_LIMIT
+            ));
+            return;
+        }
+
+        for path in &targets {
+            let _ = open::that(path);
+        }
+        if targets.len() > 1 {
+            self.show_toast(&format!("{} 件を開きました", targets.len()));
+        }
+    }
+
     fn copy_to_clipboard(&mut self, text: &str) {
         if let Ok(mut clipboard) = arboard::Clipboard::new() {
             if clipboard.set_text(text).is_ok() {
-                self.show_toast("パスをクリップボードにコピーしました！");
+                self.show_toast("クリップボードにコピーしました！");
             }
         }
     }
@@ -626,6 +673,18 @@ impl eframe::App for FileSearchApp {
                     && ui.input(|input| input.key_pressed(egui::Key::Enter))
                 {
                     search_input.request_focus();
+                    // IME確定直後は変換対象が選択範囲として残ることがある。
+                    // そのまま打つと確定した文字を消してしまうので、
+                    // キャレットを末尾に畳んでおく。
+                    if let Some(mut state) =
+                        egui::text_edit::TextEditState::load(ui.ctx(), search_input.id)
+                    {
+                        let end = egui::text::CCursor::new(self.query_text.chars().count());
+                        state
+                            .cursor
+                            .set_char_range(Some(egui::text::CCursorRange::one(end)));
+                        state.store(ui.ctx(), search_input.id);
+                    }
                 }
 
                 if search_input.changed() {
@@ -1010,6 +1069,32 @@ impl eframe::App for FileSearchApp {
                     action = Some(TableAction::CopyToClipboard(entry.path.clone()));
                     ui.close_menu();
                 }
+                // 複数選択中なら、選んだ分のファイル名を改行区切りでまとめてコピーする。
+                let names_multi = is_selected && visible_selected.len() > 1;
+                let name_label = if names_multi {
+                    format!("\u{1F4DD} {} 件のファイル名をコピー", visible_selected.len())
+                } else {
+                    "\u{1F4DD} ファイル名をコピー".to_string()
+                };
+                if ui
+                    .button(name_label)
+                    .on_hover_text(
+                        "拡張子を含むファイル名（フォルダならフォルダ名）だけをコピーします",
+                    )
+                    .clicked()
+                {
+                    let text = if names_multi {
+                        visible_selected
+                            .iter()
+                            .map(|path| FileSearchApp::file_name_of(path))
+                            .collect::<Vec<_>>()
+                            .join("\r\n")
+                    } else {
+                        entry.file_name.clone()
+                    };
+                    action = Some(TableAction::CopyToClipboard(text));
+                    ui.close_menu();
+                }
 
                 let targets: Vec<String> = if is_selected && visible_selected.len() > 1 {
                     visible_selected.iter().map(|p| p.to_string()).collect()
@@ -1075,6 +1160,9 @@ impl eframe::App for FileSearchApp {
             }
 
             let mut pending_action: Option<TableAction> = None;
+            // ドラッグ開始はフレーム描画中に実行しない（DoDragDrop がブロッキングのため）。
+            // 対象パスだけ記録し、フレーム終了後にまとめて開始する。
+            let mut pending_drag: Option<Vec<String>> = None;
             let selected_paths = &self.selected_paths;
             // 表示順を保った選択一覧。まとめて操作するときの対象になる。
             let visible_selected: Vec<&str> = self
@@ -1253,15 +1341,25 @@ impl eframe::App for FileSearchApp {
                                         row_drag_started = true;
                                     }
 
-                                    if row_drag_started {
-                                        let drag_paths: Vec<&str> = if is_selected
-                                            && !visible_selected.is_empty()
-                                        {
-                                            visible_selected.clone()
+                                    if row_drag_started && pending_drag.is_none() {
+                                        if is_selected && !visible_selected.is_empty() {
+                                            pending_drag = Some(
+                                                visible_selected
+                                                    .iter()
+                                                    .map(|p| p.to_string())
+                                                    .collect(),
+                                            );
                                         } else {
-                                            vec![entry.path.as_str()]
-                                        };
-                                        crate::drag_drop::start_drag(&drag_paths);
+                                            // 未選択行をドラッグしたときは、その行を選択状態に
+                                            // 合わせてからドラッグする（見た目と対象を一致させる）。
+                                            pending_drag = Some(vec![entry.path.clone()]);
+                                            pending_action = Some(TableAction::Select {
+                                                path: entry.path.clone(),
+                                                row: i,
+                                                ctrl: false,
+                                                shift: false,
+                                            });
+                                        }
                                     }
 
                                     if path_label.clicked() {
@@ -1301,6 +1399,9 @@ impl eframe::App for FileSearchApp {
                     shift,
                 }) => {
                     self.apply_selection(path, row, ctrl, shift);
+                    // 行を選んだら検索欄のフォーカスを外す。以降の Enter が
+                    // 一覧の「開く」として働くようにするため。
+                    ctx.memory_mut(|memory| memory.stop_text_input());
                 }
                 Some(TableAction::Open(path)) => {
                     let _ = open::that(path);
@@ -1320,6 +1421,33 @@ impl eframe::App for FileSearchApp {
                 }
                 None => {}
             }
+
+            self.pending_drag = pending_drag;
         });
+
+        // 入力欄にフォーカスが無いとき（＝一覧を操作しているとき）だけ、
+        // Enter で選択項目を開く。IME の確定 Enter と衝突させないため、
+        // 変換イベントが来ているフレームでは無視する。
+        let list_enter_pressed = ctx.input(|input| {
+            input.key_pressed(egui::Key::Enter)
+                && !input
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, egui::Event::Ime(_)))
+        });
+        if list_enter_pressed && ctx.memory(|memory| memory.focused()).is_none() {
+            self.open_selected();
+        }
+
+        // フレーム描画が終わってからドラッグを開始する。DoDragDrop は独自の
+        // メッセージループでブロックするため、描画中に呼ぶと UI が固まりやすい。
+        if let Some(paths) = self.pending_drag.take() {
+            let refs: Vec<&str> = paths.iter().map(|p| p.as_str()).collect();
+            crate::drag_drop::start_drag(&refs);
+            // ドラッグ中のマウス操作は OLE 側が握るため、egui にはボタン解放が
+            // 届かない。ポインタ状態を初期化して「押しっぱなし」状態を防ぐ。
+            ctx.input_mut(|input| input.pointer = egui::PointerState::default());
+            ctx.request_repaint();
+        }
     }
 }
