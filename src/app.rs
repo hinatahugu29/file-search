@@ -1,73 +1,23 @@
 use crate::config::{AppConfig, KindFilter, SortMode};
 use crate::entry::FileEntry;
 use crate::font::setup_japanese_fonts;
-use crate::query::SearchQuery;
-use crate::scanner::{start_scan, ScanControl, ScanMessage};
-use crate::search_worker::SearchWorker;
+use crate::tab::{ScanStatus, TabEvent, TabState};
 use eframe::egui::{self, Color32, RichText, ScrollArea, Sense};
-use std::collections::HashSet;
 use std::path::Path;
 use std::process::Command;
-use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-
-const SCAN_RESULTS_UPDATE_INTERVAL: Duration = Duration::from_millis(150);
-const LARGE_SCAN_RESULTS_UPDATE_INTERVAL: Duration = Duration::from_millis(300);
-const HUGE_SCAN_RESULTS_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
-/// Enter キーで一度に開ける件数の上限
-const OPEN_AT_ONCE_LIMIT: usize = 10;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ScanStatus {
-    Idle,     // 待機/完了
-    Scanning, // 走査中
-    Paused,   // 一時停止中
-    Warning,  // 完了（一部読込失敗）
-    Failed,   // 走査失敗
-}
 
 pub struct FileSearchApp {
-    // フォルダパスと設定
-    target_dir: String,
     config: AppConfig,
 
-    // 検索クエリとソート
-    query_text: String,
-    parsed_query: SearchQuery,
-    sort_mode: SortMode,
-
-    // キャッシュデータ（全件）
-    cached_entries: Vec<Arc<FileEntry>>,
-    // 検索結果インデックス（クエリ/ソート変更時・データ到着時のみ計算）
-    filtered_indices: Vec<usize>,
-    is_dirty: bool,
-    force_results_update: bool,
-    last_results_update_at: Instant,
-    search_worker: SearchWorker,
-    next_search_request_id: u64,
-    latest_search_request_id: u64,
-
-    // スキャン状態と制御
-    scan_status: ScanStatus,
-    status_message: String,
-    last_scan_duration_ms: Option<u128>,
-
-    // スレッド通信＆一時停止/再開/キャンセル制御
-    tx: Sender<ScanMessage>,
-    rx: Receiver<ScanMessage>,
-    scan_control: Option<ScanControl>,
+    tabs: Vec<TabState>,
+    active_tab: usize,
+    // タブに割り振る連番。閉じても使い回さない（egui の push_id を安定させるため）。
+    next_tab_id: u64,
 
     // UI状態
     // 次フレーム終了後に開始する OLE ドラッグの対象パス
     pending_drag: Option<Vec<String>>,
-
-    // 選択状態。selected_paths が実際の選択集合、selected_path は
-    // Shift+クリックの範囲選択の起点（アンカー）を兼ねた「最後に触った行」。
-    selected_path: Option<String>,
-    selected_paths: HashSet<String>,
     toast_message: Option<(String, std::time::Instant)>,
-    has_focused_search: bool,
     show_sidebar: bool,
 }
 
@@ -97,229 +47,55 @@ impl FileSearchApp {
         let show_sidebar = config.show_sidebar;
         let sort_mode = config.sort_mode;
         let kind_filter = config.kind_filter;
-        let (tx, rx) = channel();
-        let search_worker = SearchWorker::new(cc.egui_ctx.clone());
 
-        let mut app = Self {
-            target_dir: target_dir.clone(),
+        let first_tab = TabState::new(cc.egui_ctx.clone(), 0, target_dir, kind_filter, sort_mode);
+
+        Self {
             config,
-            query_text: String::new(),
-            parsed_query: {
-                let mut query = SearchQuery::parse("");
-                query.kind = kind_filter;
-                query
-            },
-            sort_mode,
-            cached_entries: Vec::new(),
-            filtered_indices: Vec::new(),
-            is_dirty: false,
-            force_results_update: false,
-            last_results_update_at: Instant::now(),
-            search_worker,
-            next_search_request_id: 0,
-            latest_search_request_id: 0,
-            scan_status: ScanStatus::Idle,
-            status_message: "準備完了".to_string(),
-            last_scan_duration_ms: None,
-            tx,
-            rx,
-            scan_control: None,
-            selected_path: None,
+            tabs: vec![first_tab],
+            active_tab: 0,
+            next_tab_id: 1,
             pending_drag: None,
-            selected_paths: HashSet::new(),
             toast_message: None,
-            has_focused_search: false,
             show_sidebar,
-        };
-
-        if !target_dir.is_empty() {
-            app.trigger_scan();
-        }
-
-        app
-    }
-
-    /// 最初から再スキャン（新規開始）
-    fn trigger_scan(&mut self) {
-        let dir = self.target_dir.trim().to_string();
-        if dir.is_empty() {
-            self.status_message = "フォルダパスを指定してください。".to_string();
-            return;
-        }
-
-        // 既存のスキャンを完全キャンセル
-        if let Some(control) = &self.scan_control {
-            control.cancel();
-        }
-
-        let (tx, rx) = channel();
-        self.tx = tx;
-        self.rx = rx;
-        let control = ScanControl::new();
-        self.scan_control = Some(control.clone());
-
-        self.scan_status = ScanStatus::Scanning;
-        self.last_scan_duration_ms = None;
-        self.cached_entries.clear();
-        self.filtered_indices.clear();
-        self.selected_path = None;
-        self.selected_paths.clear();
-        self.search_worker.reset();
-        self.is_dirty = true;
-        self.force_results_update = true;
-        self.status_message = format!("スキャン中... ({})", dir);
-
-        start_scan(dir, self.tx.clone(), control);
-    }
-
-    /// 走査の一時停止（Pause）
-    fn pause_scan(&mut self) {
-        if let Some(control) = &self.scan_control {
-            control.pause();
-            self.scan_status = ScanStatus::Paused;
-            self.status_message =
-                format!("⏸ 一時停止中 ({} 件読み込み済)", self.cached_entries.len());
-            self.show_toast("スキャンを一時停止しました（検索は可能です）");
         }
     }
 
-    /// 走査の再開（Resume）
-    fn resume_scan(&mut self) {
-        if let Some(control) = &self.scan_control {
-            control.resume();
-            self.scan_status = ScanStatus::Scanning;
-            self.status_message = format!(
-                "スキャン再開中... ({} 件読み込み済)",
-                self.cached_entries.len()
-            );
-            self.show_toast("スキャンを再開しました");
-        }
+    fn active_tab(&mut self) -> &mut TabState {
+        &mut self.tabs[self.active_tab]
     }
 
-    fn check_background_messages(&mut self) {
-        let mut received_new_items = false;
-
-        while let Ok(msg) = self.rx.try_recv() {
-            match msg {
-                ScanMessage::Validated(path) => {
-                    self.config.last_target_dir = path.clone();
-                    self.config.add_recent_folder(&path);
-                    self.config.save();
-                }
-                ScanMessage::Batch(batch) => {
-                    self.search_worker.add_batch(batch.clone());
-                    self.cached_entries.extend(batch);
-                    received_new_items = true;
-                    if self.scan_status == ScanStatus::Scanning {
-                        self.status_message =
-                            format!("スキャン中... ({} 件読み込み済)", self.cached_entries.len());
-                    }
-                }
-                ScanMessage::Complete {
-                    total_count,
-                    duration_ms,
-                    warning_count,
-                    first_warning,
-                } => {
-                    self.scan_status = if warning_count == 0 {
-                        ScanStatus::Idle
-                    } else {
-                        ScanStatus::Warning
-                    };
-                    self.last_scan_duration_ms = Some(duration_ms);
-                    self.status_message = if warning_count == 0 {
-                        format!(
-                            "スキャン完了: 全 {} 件 (所要時間: {} ms)",
-                            total_count, duration_ms
-                        )
-                    } else {
-                        format!(
-                            "スキャン完了（警告あり）: {} 件 / 読込失敗 {} 件{}",
-                            total_count,
-                            warning_count,
-                            first_warning
-                                .map(|warning| format!(" - {}", warning))
-                                .unwrap_or_default()
-                        )
-                    };
-                    self.is_dirty = true;
-                    self.force_results_update = true;
-                }
-                ScanMessage::Error(err) => {
-                    self.scan_status = ScanStatus::Failed;
-                    self.last_scan_duration_ms = None;
-                    self.status_message = format!("エラー: {}", err);
-                }
-            }
-        }
-
-        if received_new_items {
-            self.is_dirty = true;
-        }
+    /// 現在のタブの検索対象・設定を引き継いだ新規タブを開く。
+    fn open_new_tab(&mut self, ctx: &egui::Context, target_dir: String) {
+        let kind_filter = self.config.kind_filter;
+        let sort_mode = self.config.sort_mode;
+        let id = self.next_tab_id;
+        self.next_tab_id += 1;
+        let tab = TabState::new(ctx.clone(), id, target_dir, kind_filter, sort_mode);
+        self.tabs.push(tab);
+        self.active_tab = self.tabs.len() - 1;
     }
 
-    fn update_search_results_if_needed(&mut self) {
-        if !self.is_dirty {
-            return;
+    fn close_tab(&mut self, index: usize) {
+        if self.tabs.len() <= 1 {
+            return; // 最後の1枚は閉じない
         }
-
-        // 走査バッチのたびに全件を検索・ソートすると、走査スレッドとCPUを奪い合う。
-        // ユーザー操作は即時反映し、走査による更新だけを短い間隔でまとめる。
-        let update_interval = match self.cached_entries.len() {
-            0..20_000 => SCAN_RESULTS_UPDATE_INTERVAL,
-            20_000..40_000 => LARGE_SCAN_RESULTS_UPDATE_INTERVAL,
-            _ => HUGE_SCAN_RESULTS_UPDATE_INTERVAL,
-        };
-        let interval_elapsed = self.last_results_update_at.elapsed() >= update_interval;
-        if self.scan_status == ScanStatus::Scanning
-            && !self.force_results_update
-            && !interval_elapsed
-        {
-            return;
+        self.tabs.remove(index);
+        if self.active_tab >= self.tabs.len() {
+            self.active_tab = self.tabs.len() - 1;
+        } else if self.active_tab > index {
+            self.active_tab -= 1;
         }
-
-        self.next_search_request_id = self.next_search_request_id.wrapping_add(1);
-        self.latest_search_request_id = self.next_search_request_id;
-        self.search_worker.search(
-            self.latest_search_request_id,
-            self.parsed_query.clone(),
-            self.sort_mode,
-            self.config.max_results,
-        );
-        self.is_dirty = false;
-        self.force_results_update = false;
-        self.last_results_update_at = Instant::now();
-    }
-
-    fn check_search_results(&mut self) {
-        while let Ok(result) = self.search_worker.try_recv() {
-            if result.request_id == self.latest_search_request_id {
-                self.filtered_indices = result.indices;
-            }
-        }
-    }
-
-    fn set_kind_filter(&mut self, kind: KindFilter) {
-        if self.config.kind_filter == kind {
-            return;
-        }
-        self.config.kind_filter = kind;
-        self.parsed_query.kind = kind;
-        self.config.save();
-        self.is_dirty = true;
-        self.force_results_update = true;
-    }
-
-    fn set_sort_mode(&mut self, mode: SortMode) {
-        self.sort_mode = mode;
-        self.config.sort_mode = mode;
-        self.config.save();
-        self.is_dirty = true;
-        self.force_results_update = true;
     }
 
     fn show_toast(&mut self, text: &str) {
         self.toast_message = Some((text.to_string(), std::time::Instant::now()));
+    }
+
+    fn show_toast_opt(&mut self, text: Option<String>) {
+        if let Some(text) = text {
+            self.show_toast(&text);
+        }
     }
 
     /// パスからファイル名（末尾要素）だけを取り出す。
@@ -356,57 +132,6 @@ impl FileSearchApp {
                 let _ = open::that(parent);
             }
         }
-    }
-
-    /// クリック修飾キーに応じて選択集合を更新する。
-    /// Ctrl で個別にトグル、Shift でアンカーからの範囲選択。
-    fn apply_selection(&mut self, path: String, row: usize, ctrl: bool, shift: bool) {
-        if shift {
-            if let Some(anchor_row) = self
-                .selected_path
-                .clone()
-                .and_then(|anchor| self.row_of_path(&anchor))
-            {
-                let (from, to) = if anchor_row <= row {
-                    (anchor_row, row)
-                } else {
-                    (row, anchor_row)
-                };
-                if !ctrl {
-                    self.selected_paths.clear();
-                }
-                for target_row in from..=to {
-                    if let Some(entry) = self
-                        .filtered_indices
-                        .get(target_row)
-                        .and_then(|&index| self.cached_entries.get(index))
-                    {
-                        self.selected_paths.insert(entry.path.clone());
-                    }
-                }
-                // 連続して範囲を伸ばせるため、アンカーは動かさない。
-                return;
-            }
-        }
-
-        if ctrl {
-            if !self.selected_paths.remove(&path) {
-                self.selected_paths.insert(path.clone());
-            }
-        } else {
-            self.selected_paths.clear();
-            self.selected_paths.insert(path.clone());
-        }
-        self.selected_path = Some(path);
-    }
-
-    /// 現在の表示順における行番号を返す（検索やソートで順番が変わるため都度引く）
-    fn row_of_path(&self, path: &str) -> Option<usize> {
-        self.filtered_indices.iter().position(|&index| {
-            self.cached_entries
-                .get(index)
-                .is_some_and(|entry| entry.path == path)
-        })
     }
 
     /// ファイル本体をクリップボードへ置く（エクスプローラーで Ctrl+C したのと同じ CF_HDROP 形式）。
@@ -456,41 +181,7 @@ impl FileSearchApp {
     #[cfg(not(target_os = "windows"))]
     fn copy_files_to_clipboard(&mut self, paths: &[String]) {
         // CF_HDROP はWindows固有のため、他OSではパスのコピーで代替する。
-        self.copy_to_clipboard(&paths.join("
-"));
-    }
-
-    /// 選択中の項目を既定のアプリで開く。Enter キーからの実行に使う。
-    fn open_selected(&mut self) {
-        // 表示順を保った選択一覧。1件も選択が無いときは何もしない。
-        let targets: Vec<String> = self
-            .filtered_indices
-            .iter()
-            .filter_map(|&index| self.cached_entries.get(index))
-            .filter(|entry| self.selected_paths.contains(&entry.path))
-            .map(|entry| entry.path.clone())
-            .collect();
-
-        if targets.is_empty() {
-            return;
-        }
-        // 大量に選択したまま Enter を押したときに、アプリが何十個も
-        // 立ち上がるのを防ぐ。
-        if targets.len() > OPEN_AT_ONCE_LIMIT {
-            self.show_toast(&format!(
-                "{} 件選択されています（Enter で一度に開けるのは {} 件までです）",
-                targets.len(),
-                OPEN_AT_ONCE_LIMIT
-            ));
-            return;
-        }
-
-        for path in &targets {
-            let _ = open::that(path);
-        }
-        if targets.len() > 1 {
-            self.show_toast(&format!("{} 件を開きました", targets.len()));
-        }
+        self.copy_to_clipboard(&paths.join("\n"));
     }
 
     fn copy_to_clipboard(&mut self, text: &str) {
@@ -500,20 +191,33 @@ impl FileSearchApp {
             }
         }
     }
-
-    fn is_current_dir_favorite(&self) -> bool {
-        let trimmed = self.target_dir.trim();
-        self.config.favorites.iter().any(|b| b.path == trimmed)
-    }
 }
 
 impl eframe::App for FileSearchApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.check_background_messages();
-        self.update_search_results_if_needed();
-        self.check_search_results();
+        // ==========================================
+        // バックグラウンド処理の反映（全タブ分）
+        // ==========================================
+        let mut any_scanning = false;
+        let max_results = self.config.max_results;
+        for tab in self.tabs.iter_mut() {
+            for event in tab.check_background_messages() {
+                match event {
+                    TabEvent::Validated(path) => {
+                        self.config.last_target_dir = path.clone();
+                        self.config.add_recent_folder(&path);
+                        self.config.save();
+                    }
+                }
+            }
+            tab.update_search_results_if_needed(max_results);
+            tab.check_search_results();
+            if tab.scan_status == ScanStatus::Scanning {
+                any_scanning = true;
+            }
+        }
 
-        if self.scan_status == ScanStatus::Scanning {
+        if any_scanning {
             ctx.request_repaint_after(std::time::Duration::from_millis(50));
         }
 
@@ -521,6 +225,83 @@ impl eframe::App for FileSearchApp {
             if created_at.elapsed().as_secs_f32() > 2.5 {
                 self.toast_message = None;
             }
+        }
+
+        // ==========================================
+        // タブ操作のショートカット（Ctrl+T: 新規タブ、Ctrl+W: タブを閉じる）
+        // ==========================================
+        let (new_tab_shortcut, close_tab_shortcut) = ctx.input(|input| {
+            (
+                input.modifiers.command && input.key_pressed(egui::Key::T),
+                input.modifiers.command && input.key_pressed(egui::Key::W),
+            )
+        });
+        if new_tab_shortcut {
+            let current_dir = self.tabs[self.active_tab].target_dir.clone();
+            self.open_new_tab(ctx, current_dir);
+        }
+        if close_tab_shortcut {
+            self.close_tab(self.active_tab);
+        }
+
+        // ==========================================
+        // 上部パネル（タブバー＋操作バー）
+        // ==========================================
+        let mut new_tab_requested = false;
+        let mut tab_to_activate: Option<usize> = None;
+        let mut tab_to_close: Option<usize> = None;
+
+        egui::TopBottomPanel::top("tab_bar").show(ctx, |ui| {
+            ui.add_space(4.0);
+            ScrollArea::horizontal().show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    for (index, tab) in self.tabs.iter().enumerate() {
+                        ui.push_id(tab.id, |ui| {
+                            let is_active = index == self.active_tab;
+                            let scanning_marker = if tab.scan_status == ScanStatus::Scanning {
+                                "⚡ "
+                            } else {
+                                ""
+                            };
+                            let label = format!("{}{}", scanning_marker, tab.title());
+
+                            ui.group(|ui| {
+                                ui.horizontal(|ui| {
+                                    if ui.selectable_label(is_active, RichText::new(label)).clicked()
+                                    {
+                                        tab_to_activate = Some(index);
+                                    }
+                                    if self.tabs.len() > 1
+                                        && ui.small_button("✕").on_hover_text("タブを閉じる (Ctrl+W)").clicked()
+                                    {
+                                        tab_to_close = Some(index);
+                                    }
+                                });
+                            });
+                        });
+                    }
+
+                    if ui
+                        .button(RichText::new("＋").strong())
+                        .on_hover_text("新しいタブを開く（現在のフォルダを引き継ぎます） (Ctrl+T)")
+                        .clicked()
+                    {
+                        new_tab_requested = true;
+                    }
+                });
+            });
+            ui.add_space(4.0);
+        });
+
+        if let Some(index) = tab_to_activate {
+            self.active_tab = index;
+        }
+        if let Some(index) = tab_to_close {
+            self.close_tab(index);
+        }
+        if new_tab_requested {
+            let current_dir = self.tabs[self.active_tab].target_dir.clone();
+            self.open_new_tab(ctx, current_dir);
         }
 
         // ==========================================
@@ -547,22 +328,24 @@ impl eframe::App for FileSearchApp {
 
                 // 右側のボタングループを右詰め（right_to_left）で確実に配置し、残余幅をTextEditに割り当てる
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let scan_status = self.active_tab().scan_status;
                     // スキャン制御ボタン
-                    match self.scan_status {
+                    match scan_status {
                         ScanStatus::Scanning => {
                             if ui
                                 .button("🔄 最初から")
                                 .on_hover_text("キャッシュをクリアして最初から再スキャンします")
                                 .clicked()
                             {
-                                self.trigger_scan();
+                                self.active_tab().trigger_scan();
                             }
                             if ui
                                 .button("⏸ 一時停止")
                                 .on_hover_text("走査を一時停止します（続きから再開可能）")
                                 .clicked()
                             {
-                                self.pause_scan();
+                                let msg = self.active_tab().pause_scan();
+                                self.show_toast_opt(msg);
                             }
                             ui.spinner();
                         }
@@ -572,7 +355,7 @@ impl eframe::App for FileSearchApp {
                                 .on_hover_text("キャッシュをクリアして最初から再スキャンします")
                                 .clicked()
                             {
-                                self.trigger_scan();
+                                self.active_tab().trigger_scan();
                             }
                             if ui
                                 .button(
@@ -583,7 +366,8 @@ impl eframe::App for FileSearchApp {
                                 .on_hover_text("中断した続きから走査を再開します")
                                 .clicked()
                             {
-                                self.resume_scan();
+                                let msg = self.active_tab().resume_scan();
+                                self.show_toast_opt(msg);
                             }
                         }
                         ScanStatus::Idle | ScanStatus::Warning => {
@@ -592,18 +376,18 @@ impl eframe::App for FileSearchApp {
                                 .on_hover_text("フォルダ内を最初から再スキャンします")
                                 .clicked()
                             {
-                                self.trigger_scan();
+                                self.active_tab().trigger_scan();
                             }
                         }
                         ScanStatus::Failed => {
                             if ui.button("🔄 再試行").clicked() {
-                                self.trigger_scan();
+                                self.active_tab().trigger_scan();
                             }
                         }
                     }
 
                     // お気に入りボタン
-                    let is_fav = self.is_current_dir_favorite();
+                    let is_fav = self.tabs[self.active_tab].is_favorite(&self.config);
                     let fav_icon = if is_fav {
                         "⭐ 登録済"
                     } else {
@@ -618,32 +402,35 @@ impl eframe::App for FileSearchApp {
                         })
                         .clicked()
                         && !is_fav
-                        && !self.target_dir.trim().is_empty()
+                        && !self.active_tab().target_dir.trim().is_empty()
                     {
-                        self.config.add_favorite(None, &self.target_dir);
+                        let dir = self.active_tab().target_dir.clone();
+                        self.config.add_favorite(None, &dir);
                         self.config.save();
                         self.show_toast("お気に入りに追加しました！");
                     }
 
                     // 参照ボタン
                     if ui.button("📂 参照...").clicked() {
+                        let current_dir = self.active_tab().target_dir.clone();
                         if let Some(folder) = rfd::FileDialog::new()
-                            .set_directory(&self.target_dir)
+                            .set_directory(&current_dir)
                             .pick_folder()
                         {
-                            self.target_dir = folder.to_string_lossy().to_string();
-                            self.trigger_scan();
+                            let tab = self.active_tab();
+                            tab.target_dir = folder.to_string_lossy().to_string();
+                            tab.trigger_scan();
                         }
                     }
 
                     // 残った中央のスペース全域をパス入力欄に充当
                     let dir_edit = ui.add_sized(
                         [ui.available_width(), 24.0],
-                        egui::TextEdit::singleline(&mut self.target_dir)
+                        egui::TextEdit::singleline(&mut self.active_tab().target_dir)
                             .hint_text("検索する親フォルダのパス（例: D:\\Projects）"),
                     );
                     if dir_edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                        self.trigger_scan();
+                        self.active_tab().trigger_scan();
                     }
                 });
             });
@@ -653,18 +440,20 @@ impl eframe::App for FileSearchApp {
             // 2. 検索バー行
             ui.horizontal(|ui| {
                 ui.label(RichText::new("🔍 検索:").strong().size(16.0));
+                let tab = self.active_tab();
+                let mut query_text = tab.query_text.clone();
                 let search_input = ui.add_sized(
                     [ui.available_width() - 10.0, 28.0],
-                    egui::TextEdit::singleline(&mut self.query_text)
+                    egui::TextEdit::singleline(&mut query_text)
                         .hint_text("キーワード（スペースでAND、| でOR、! で除外）")
                         .font(egui::TextStyle::Heading)
                         // IMEの候補選択に使うTabで次のウィジェットへ移動させない。
                         .lock_focus(true),
                 );
 
-                if !self.has_focused_search {
+                if !tab.has_focused_search {
                     search_input.request_focus();
-                    self.has_focused_search = true;
+                    tab.has_focused_search = true;
                 }
 
                 // singlelineはEnterを受けると標準動作でフォーカスを手放す。
@@ -679,7 +468,7 @@ impl eframe::App for FileSearchApp {
                     if let Some(mut state) =
                         egui::text_edit::TextEditState::load(ui.ctx(), search_input.id)
                     {
-                        let end = egui::text::CCursor::new(self.query_text.chars().count());
+                        let end = egui::text::CCursor::new(query_text.chars().count());
                         state
                             .cursor
                             .set_char_range(Some(egui::text::CCursorRange::one(end)));
@@ -688,10 +477,7 @@ impl eframe::App for FileSearchApp {
                 }
 
                 if search_input.changed() {
-                    self.parsed_query = SearchQuery::parse(&self.query_text);
-                    self.parsed_query.kind = self.config.kind_filter;
-                    self.is_dirty = true;
-                    self.force_results_update = true;
+                    tab.set_query_text(query_text);
                 }
             });
 
@@ -703,7 +489,8 @@ impl eframe::App for FileSearchApp {
         // ==========================================
         egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                let status_color = match self.scan_status {
+                let tab = self.active_tab();
+                let status_color = match tab.scan_status {
                     ScanStatus::Scanning => Color32::from_rgb(255, 190, 80),
                     ScanStatus::Paused => Color32::from_rgb(255, 140, 140),
                     ScanStatus::Warning => Color32::from_rgb(255, 190, 80),
@@ -711,7 +498,7 @@ impl eframe::App for FileSearchApp {
                     ScanStatus::Idle => Color32::LIGHT_GRAY,
                 };
                 ui.label(
-                    RichText::new(&self.status_message)
+                    RichText::new(&tab.status_message)
                         .size(12.0)
                         .color(status_color),
                 );
@@ -736,6 +523,7 @@ impl eframe::App for FileSearchApp {
         let mut clear_recents_requested = false;
 
         if self.show_sidebar {
+            let active_dir = self.tabs[self.active_tab].target_dir.clone();
             egui::SidePanel::left("left_sidebar")
                 .resizable(true)
                 .default_width(240.0)
@@ -754,7 +542,7 @@ impl eframe::App for FileSearchApp {
                             ui.label(RichText::new("登録されたフォルダはありません。\n上部の「☆ お気に入り」から追加できます。").size(11.0).color(Color32::GRAY));
                         } else {
                             for (idx, bookmark) in self.config.favorites.iter().enumerate() {
-                                let is_active = self.target_dir.trim() == bookmark.path.trim();
+                                let is_active = active_dir.trim() == bookmark.path.trim();
 
                                 ui.horizontal(|ui| {
                                     let btn = ui.selectable_label(
@@ -792,7 +580,7 @@ impl eframe::App for FileSearchApp {
                             ui.label(RichText::new("履歴はありません。").size(11.0).color(Color32::GRAY));
                         } else {
                             for path_str in &self.config.recent_folders {
-                                let is_active = self.target_dir.trim() == path_str.trim();
+                                let is_active = active_dir.trim() == path_str.trim();
                                 let folder_name = Path::new(path_str)
                                     .file_name()
                                     .map(|n| n.to_string_lossy().to_string())
@@ -814,8 +602,9 @@ impl eframe::App for FileSearchApp {
         }
 
         if let Some(path) = target_to_switch {
-            self.target_dir = path;
-            self.trigger_scan();
+            let tab = self.active_tab();
+            tab.target_dir = path;
+            tab.trigger_scan();
         }
         if let Some(idx) = fav_to_remove {
             self.config.remove_favorite(idx);
@@ -831,20 +620,27 @@ impl eframe::App for FileSearchApp {
         // ==========================================
         // メイン領域：検索結果一覧（ヘッダーソート＆ワンクリックパスコピー）
         // ==========================================
+        let mut copy_files_request: Option<Vec<String>> = None;
+        let mut copy_text_request: Option<String> = None;
+        let mut search_in_folder_request: Option<String> = None;
+        let mut open_in_explorer_request: Option<String> = None;
+
         egui::CentralPanel::default().show(ctx, |ui| {
-            let hit_count = self.filtered_indices.len();
-            let total_count = self.cached_entries.len();
+            let active_idx = self.active_tab;
+            let tab = &mut self.tabs[active_idx];
+            let hit_count = tab.filtered_indices.len();
+            let total_count = tab.cached_entries.len();
 
             // 1. サマリーバー
             ui.horizontal(|ui| {
-                let status_prefix = match self.scan_status {
+                let status_prefix = match tab.scan_status {
                     ScanStatus::Scanning => "⚡ 走査中...",
                     ScanStatus::Paused => "⏸ 一時停止中",
                     ScanStatus::Warning => "⚠ 完了（警告あり）",
                     ScanStatus::Failed => "⚠ 走査エラー",
                     ScanStatus::Idle => "✓ 完了",
                 };
-                let status_color = match self.scan_status {
+                let status_color = match tab.scan_status {
                     ScanStatus::Scanning => Color32::from_rgb(255, 180, 80),
                     ScanStatus::Paused => Color32::from_rgb(255, 140, 140),
                     ScanStatus::Warning => Color32::from_rgb(255, 190, 80),
@@ -858,15 +654,15 @@ impl eframe::App for FileSearchApp {
                 );
                 ui.label(RichText::new(count_text).strong().color(status_color));
 
-                if self.selected_paths.len() > 1 {
+                if tab.selected_paths.len() > 1 {
                     ui.label(
-                        RichText::new(format!("☑ {} 件選択中", self.selected_paths.len()))
+                        RichText::new(format!("☑ {} 件選択中", tab.selected_paths.len()))
                             .size(11.0)
                             .color(Color32::from_rgb(140, 220, 140)),
                     );
                 }
 
-                if let Some(duration) = self.last_scan_duration_ms {
+                if let Some(duration) = tab.last_scan_duration_ms {
                     ui.label(
                         RichText::new(format!("(走査時間: {} ms)", duration))
                             .size(11.0)
@@ -885,6 +681,9 @@ impl eframe::App for FileSearchApp {
             const ROW_HEIGHT: f32 = 24.0;
             let pane_width = self.config.name_pane_width;
 
+            let mut next_sort_mode: Option<SortMode> = None;
+            let mut next_kind_filter: Option<KindFilter> = None;
+
             ui.horizontal(|ui| {
                 ui.allocate_ui_with_layout(
                     egui::vec2(pane_width, 22.0),
@@ -895,12 +694,12 @@ impl eframe::App for FileSearchApp {
                             egui::Label::new(RichText::new("\u{1F4CB}").size(11.0)),
                         );
 
-                        let (name_arrow, next_name_mode) = match self.sort_mode {
+                        let (name_arrow, next_name_mode) = match tab.sort_mode {
                             SortMode::NameAsc => ("\u{25B2}", SortMode::NameDesc),
                             SortMode::NameDesc => ("\u{25BC}", SortMode::NameAsc),
                             _ => ("\u{2195}", SortMode::NameAsc),
                         };
-                        let (date_arrow, next_date_mode) = match self.sort_mode {
+                        let (date_arrow, next_date_mode) = match tab.sort_mode {
                             SortMode::DateDesc => ("\u{25BC}", SortMode::DateAsc),
                             SortMode::DateAsc => ("\u{25B2}", SortMode::DateDesc),
                             _ => ("\u{2195}", SortMode::DateDesc),
@@ -924,7 +723,7 @@ impl eframe::App for FileSearchApp {
                                     .on_hover_text("クリックで日付順（新しい順/古い順）を切り替え")
                                     .clicked()
                                 {
-                                    self.set_sort_mode(next_date_mode);
+                                    next_sort_mode = Some(next_date_mode);
                                 }
 
                                 ui.with_layout(
@@ -943,7 +742,7 @@ impl eframe::App for FileSearchApp {
                                             )
                                             .clicked()
                                         {
-                                            self.set_sort_mode(next_name_mode);
+                                            next_sort_mode = Some(next_name_mode);
                                         }
                                     },
                                 );
@@ -983,7 +782,7 @@ impl eframe::App for FileSearchApp {
                 );
                 splitter.on_hover_text("ドラッグで幅を調整（ダブルクリックで既定に戻す）");
 
-                let (path_arrow, next_path_mode) = match self.sort_mode {
+                let (path_arrow, next_path_mode) = match tab.sort_mode {
                     SortMode::PathAsc => ("\u{25B2}", SortMode::PathDesc),
                     SortMode::PathDesc => ("\u{25BC}", SortMode::PathAsc),
                     _ => ("\u{2195}", SortMode::PathAsc),
@@ -994,27 +793,40 @@ impl eframe::App for FileSearchApp {
                     .on_hover_text("クリックでパス順（昇順/降順）を切り替え")
                     .clicked()
                 {
-                    self.set_sort_mode(next_path_mode);
+                    next_sort_mode = Some(next_path_mode);
                 }
 
                 // 右端：種別フィルタのトグル
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let mut next_kind = self.config.kind_filter;
+                    let mut kind = tab.kind_filter;
                     // 右詰めレイアウトなので、見た目の並びに合わせて逆順に置く。
                     ui.selectable_value(
-                        &mut next_kind,
+                        &mut kind,
                         KindFilter::DirsOnly,
                         "\u{1F4C1} フォルダのみ",
                     );
                     ui.selectable_value(
-                        &mut next_kind,
+                        &mut kind,
                         KindFilter::FilesOnly,
                         "\u{1F4C4} ファイルのみ",
                     );
-                    ui.selectable_value(&mut next_kind, KindFilter::Both, "\u{1F5C2} 両方");
-                    self.set_kind_filter(next_kind);
+                    ui.selectable_value(&mut kind, KindFilter::Both, "\u{1F5C2} 両方");
+                    if kind != tab.kind_filter {
+                        next_kind_filter = Some(kind);
+                    }
                 });
             });
+
+            if let Some(mode) = next_sort_mode {
+                tab.set_sort_mode(mode);
+                self.config.sort_mode = mode;
+                self.config.save();
+            }
+            if let Some(kind) = next_kind_filter {
+                tab.set_kind_filter(kind);
+                self.config.kind_filter = kind;
+                self.config.save();
+            }
 
             ui.separator();
 
@@ -1163,12 +975,12 @@ impl eframe::App for FileSearchApp {
             // ドラッグ開始はフレーム描画中に実行しない（DoDragDrop がブロッキングのため）。
             // 対象パスだけ記録し、フレーム終了後にまとめて開始する。
             let mut pending_drag: Option<Vec<String>> = None;
-            let selected_paths = &self.selected_paths;
+            let selected_paths = &tab.selected_paths;
             // 表示順を保った選択一覧。まとめて操作するときの対象になる。
-            let visible_selected: Vec<&str> = self
+            let visible_selected: Vec<&str> = tab
                 .filtered_indices
                 .iter()
-                .filter_map(|&index| self.cached_entries.get(index))
+                .filter_map(|&index| tab.cached_entries.get(index))
                 .filter(|entry| selected_paths.contains(&entry.path))
                 .map(|entry| entry.path.as_str())
                 .collect();
@@ -1181,13 +993,13 @@ impl eframe::App for FileSearchApp {
                 .show_rows(
                     ui,
                     ROW_HEIGHT,
-                    self.filtered_indices.len(),
+                    tab.filtered_indices.len(),
                     |ui, row_range| {
                         for i in row_range {
-                            let Some(&entry_idx) = self.filtered_indices.get(i) else {
+                            let Some(&entry_idx) = tab.filtered_indices.get(i) else {
                                 continue;
                             };
-                            let Some(entry) = self.cached_entries.get(entry_idx) else {
+                            let Some(entry) = tab.cached_entries.get(entry_idx) else {
                                 continue;
                             };
                             let is_selected = selected_paths.contains(&entry.path);
@@ -1398,7 +1210,7 @@ impl eframe::App for FileSearchApp {
                     ctrl,
                     shift,
                 }) => {
-                    self.apply_selection(path, row, ctrl, shift);
+                    tab.apply_selection(path, row, ctrl, shift);
                     // 行を選んだら検索欄のフォーカスを外す。以降の Enter が
                     // 一覧の「開く」として働くようにするため。
                     ctx.memory_mut(|memory| memory.stop_text_input());
@@ -1407,23 +1219,39 @@ impl eframe::App for FileSearchApp {
                     let _ = open::that(path);
                 }
                 Some(TableAction::OpenInExplorer(path)) => {
-                    self.open_in_explorer(&path);
+                    open_in_explorer_request = Some(path);
                 }
-                Some(TableAction::CopyToClipboard(path)) => {
-                    self.copy_to_clipboard(&path);
+                Some(TableAction::CopyToClipboard(text)) => {
+                    copy_text_request = Some(text);
                 }
                 Some(TableAction::CopyFilesToClipboard(paths)) => {
-                    self.copy_files_to_clipboard(&paths);
+                    copy_files_request = Some(paths);
                 }
                 Some(TableAction::SearchInFolder(path)) => {
-                    self.target_dir = path;
-                    self.trigger_scan();
+                    search_in_folder_request = Some(path);
                 }
                 None => {}
             }
 
             self.pending_drag = pending_drag;
         });
+
+        // テーブル描画中に発生した副作用（クリップボード・エクスプローラー表示・
+        // フォルダ内検索）は、CentralPanel の可変借用が終わった後にまとめて実行する。
+        if let Some(path) = open_in_explorer_request {
+            self.open_in_explorer(&path);
+        }
+        if let Some(path) = search_in_folder_request {
+            let tab = self.active_tab();
+            tab.target_dir = path;
+            tab.trigger_scan();
+        }
+        if let Some(text) = copy_text_request {
+            self.copy_to_clipboard(&text);
+        }
+        if let Some(paths) = copy_files_request {
+            self.copy_files_to_clipboard(&paths);
+        }
 
         // 入力欄にフォーカスが無いとき（＝一覧を操作しているとき）だけ、
         // Enter で選択項目を開く。IME の確定 Enter と衝突させないため、
@@ -1436,7 +1264,8 @@ impl eframe::App for FileSearchApp {
                     .any(|event| matches!(event, egui::Event::Ime(_)))
         });
         if list_enter_pressed && ctx.memory(|memory| memory.focused()).is_none() {
-            self.open_selected();
+            let msg = self.active_tab().open_selected();
+            self.show_toast_opt(msg);
         }
 
         // フレーム描画が終わってからドラッグを開始する。DoDragDrop は独自の

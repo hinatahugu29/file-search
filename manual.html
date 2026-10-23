@@ -567,13 +567,14 @@
       <ul>
         <li><a href="#overview">1. はじめに・特徴</a></li>
         <li><a href="#ui-layout">2. 画面構成と各部名称</a></li>
-        <li><a href="#basic-flow">3. 基本的な使い方</a></li>
-        <li><a href="#search-syntax">4. 高度な検索クエリ仕様</a></li>
-        <li><a href="#scan-control">5. スキャン制御（一時停止・再開）</a></li>
-        <li><a href="#sidebar-management">6. お気に入り＆履歴の活用</a></li>
-        <li><a href="#context-actions">7. 選択・ファイル操作・ドラッグ＆ドロップ</a></li>
-        <li><a href="#sorting-options">8. 並び替え・種別フィルタ・列幅</a></li>
-        <li><a href="#faq-troubleshooting">9. よくある質問・設定情報</a></li>
+        <li><a href="#tabs">3. タブ機能（複数フォルダの同時検索）</a></li>
+        <li><a href="#basic-flow">4. 基本的な使い方</a></li>
+        <li><a href="#search-syntax">5. 高度な検索クエリ仕様</a></li>
+        <li><a href="#scan-control">6. スキャン制御（一時停止・再開）</a></li>
+        <li><a href="#sidebar-management">7. お気に入り＆履歴の活用</a></li>
+        <li><a href="#context-actions">8. 選択・ファイル操作・ドラッグ＆ドロップ</a></li>
+        <li><a href="#sorting-options">9. 並び替え・種別フィルタ・列幅</a></li>
+        <li><a href="#faq-troubleshooting">10. よくある質問・設定情報</a></li>
       </ul>
     </nav>
   </aside>
@@ -590,6 +591,7 @@
       <h1 class="hero-title">高速ファイル検索 (Fast File Search) 操作マニュアル</h1>
       <p class="hero-subtitle">
         指定した親フォルダ配下を爆速で並列走査し、メモリ上から数万〜数十万件のファイルを瞬時にインクリメンタル絞り込みする超軽量デスクトップ検索ツールです。
+        タブ機能で複数フォルダを並行してスキャン・検索でき、フォルダを切り替えるたびの再検索を減らせます。
       </p>
     </header>
 
@@ -630,13 +632,19 @@
           <h4>OLEドラッグ＆ドロップ / 複数選択</h4>
           <p>Ctrl・Shift で複数行を選択し、そのままエクスプローラーやメール、他アプリへドラッグしてファイルをコピー。クリップボード経由の一括コピー（Ctrl+V で貼り付け）にも対応します。</p>
         </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">🗂️</div>
+          <h4>タブで複数フォルダを並行検索</h4>
+          <p>タブを増やすだけで別フォルダのスキャン・検索を同時に進められます。タブを切り替えても結果は保持されるため、同じフォルダへの再検索・再スキャンが不要です（<code>Ctrl+T</code> / <code>Ctrl+W</code> で素早く開閉）。</p>
+        </div>
       </div>
     </section>
 
     <!-- 2. 画面構成と各部名称 -->
     <section id="ui-layout">
       <h2>🖥️ 2. 画面構成と各部名称</h2>
-      <p>直感的で無駄のない3ペイン構成（上部操作バー・左サイドバー・中央結果テーブル）となっています。</p>
+      <p>タブバー・上部操作バー・左サイドバー・中央結果テーブルで構成されています。</p>
 
       <!-- UIモックアップ -->
       <div class="ui-mockup">
@@ -647,6 +655,13 @@
           <span class="mockup-title">高速ファイル検索 - Fast File Search (Rust)</span>
         </div>
         <div class="mockup-body">
+          <!-- タブバー -->
+          <div class="mockup-flex-row" style="margin-bottom: 10px;">
+            <span class="mockup-tag" style="background:#1e3a8a; color:#93c5fd; border-color:#3b82f6;">⚡ MyApp ✕</span>
+            <span class="mockup-tag">Documents ✕</span>
+            <span class="mockup-btn" style="padding: 2px 8px;">＋</span>
+          </div>
+
           <!-- 上部バー -->
           <div class="mockup-top-bar">
             <div class="mockup-flex-row">
@@ -719,9 +734,14 @@
         </thead>
         <tbody>
           <tr>
+            <td><strong>タブバー</strong></td>
+            <td>タブ一覧、「✕」で閉じる、「＋」で新規タブ</td>
+            <td>タブごとに検索対象フォルダ・検索結果・選択状態・ソート・種別フィルタが独立しています。走査中のタブには「⚡」マークが付きます。</td>
+          </tr>
+          <tr>
             <td><strong>上部操作バー</strong></td>
             <td>フォルダ入力、参照、お気に入り、スキャン制御、検索バー、種別フィルタ</td>
-            <td>検索対象となる親ディレクトリの指定とキーワード入力を行うメインコントロールです。検索バーの右には「📁 フォルダのみ / 📄 ファイルのみ / 🗂 両方」の種別フィルタが並びます。</td>
+            <td>検索対象となる親ディレクトリの指定とキーワード入力を行うメインコントロールです（現在アクティブなタブに対して操作します）。検索バーの右には「📁 フォルダのみ / 📄 ファイルのみ / 🗂 両方」の種別フィルタが並びます。</td>
           </tr>
           <tr>
             <td><strong>左サイドバー</strong></td>
@@ -742,9 +762,60 @@
       </table>
     </section>
 
-    <!-- 3. 基本的な使い方 -->
+    <!-- 3. タブ機能 -->
+    <section id="tabs">
+      <h2>🗂️ 3. タブ機能（複数フォルダの同時検索）</h2>
+      <p>
+        タブを使うと、フォルダを切り替えるたびに再スキャン・再検索する手間を減らせます。各タブは検索対象フォルダ・走査結果・検索クエリ・選択状態・ソート・種別フィルタをそれぞれ独立して保持します。
+      </p>
+
+      <table class="manual-table">
+        <thead>
+          <tr>
+            <th>操作</th>
+            <th>方法</th>
+            <th>備考</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>新しいタブを開く</strong></td>
+            <td>タブバー右端の「＋」をクリック、または <code>Ctrl+T</code></td>
+            <td>現在のタブの検索対象フォルダを引き継いだ状態で開きます。</td>
+          </tr>
+          <tr>
+            <td><strong>タブを閉じる</strong></td>
+            <td>タブの「✕」をクリック、または <code>Ctrl+W</code></td>
+            <td>最後の1枚のタブは閉じられません。</td>
+          </tr>
+          <tr>
+            <td><strong>タブを切り替える</strong></td>
+            <td>タブをクリック</td>
+            <td>切り替えても検索結果・スキャン進捗はそのまま保持され、再スキャンは発生しません。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="callout callout-tip">
+        <span class="callout-icon">💡</span>
+        <div class="callout-content">
+          <strong>複数タブは同時にスキャンされます</strong><br>
+          タブを切り替えなくても、他タブのスキャンはバックグラウンドで並行して進みます（走査中のタブには「⚡」マークが表示されます）。ただし走査用スレッドはアプリ全体で共有しているため、同時に多数のタブを大量スキャンすると、CPU・ディスクI/Oを取り合って個々の速度は遅くなります。
+        </div>
+      </div>
+
+      <div class="callout callout-warn">
+        <span class="callout-icon">⚠️</span>
+        <div class="callout-content">
+          <strong>タブの構成はアプリ再起動後に復元されません</strong><br>
+          お気に入り・検索履歴・最後に開いていたフォルダ（1つ分）やソート・種別フィルタ・列幅の既定値は保存されますが、開いていたタブの枚数や中身は次回起動時には引き継がれません。
+        </div>
+      </div>
+    </section>
+
+    <!-- 4. 基本的な使い方 -->
     <section id="basic-flow">
-      <h2>📖 3. 基本的な使い方</h2>
+      <h2>📖 4. 基本的な使い方</h2>
 
       <ol class="step-list">
         <li class="step-item">
@@ -793,7 +864,7 @@
 
     <!-- 4. 高度な検索クエリ仕様 -->
     <section id="search-syntax">
-      <h2>⚡ 4. 高度な検索クエリ仕様</h2>
+      <h2>⚡ 5. 高度な検索クエリ仕様</h2>
       <p>
         検索クエリエンジンは強力な構文解析を備えており、大文字小文字の区別なく、スペースや記号を組み合わせた柔軟な絞り込みが可能です。
       </p>
@@ -869,7 +940,7 @@
 
     <!-- 5. スキャン制御 -->
     <section id="scan-control">
-      <h2>⏸️ 5. スキャン制御（一時停止・再開・最初から）</h2>
+      <h2>⏸️ 6. スキャン制御（一時停止・再開・最初から）</h2>
       <p>
         膨大なファイルが存在するフォルダをスキャンする際、状況に合わせて柔軟に走査をコントロールできます。
       </p>
@@ -901,7 +972,7 @@
 
     <!-- 6. お気に入り＆履歴の活用 -->
     <section id="sidebar-management">
-      <h2>⭐ 6. お気に入り＆検索履歴の活用</h2>
+      <h2>⭐ 7. お気に入り＆検索履歴の活用</h2>
       <p>
         画面左側のサイドバーでは、頻繁に利用するフォルダへの素早いアクセスをサポートします。
       </p>
@@ -929,9 +1000,9 @@
       </div>
     </section>
 
-    <!-- 7. 選択・ファイル操作・ドラッグ＆ドロップ -->
+    <!-- 8. 選択・ファイル操作・ドラッグ＆ドロップ -->
     <section id="context-actions">
-      <h2>🖱️ 7. 選択・ファイル操作・ドラッグ＆ドロップ</h2>
+      <h2>🖱️ 8. 選択・ファイル操作・ドラッグ＆ドロップ</h2>
       <p>
         検索結果の行に対して、多彩なマウスアクションが用意されています。ファイル名・パスのどちらを掴んでも同じ操作が行えます。
       </p>
@@ -1026,9 +1097,9 @@
       </div>
     </section>
 
-    <!-- 8. 並び替え・種別フィルタ・列幅 -->
+    <!-- 9. 並び替え・種別フィルタ・列幅 -->
     <section id="sorting-options">
-      <h2>🔃 8. 並び替え・種別フィルタ・列幅</h2>
+      <h2>🔃 9. 並び替え・種別フィルタ・列幅</h2>
       <p>
         検索結果テーブルのヘッダーをクリックすることで、並び順を瞬時に切り替えられます。
       </p>
@@ -1072,9 +1143,9 @@
       </p>
     </section>
 
-    <!-- 9. よくある質問・設定情報 -->
+    <!-- 10. よくある質問・設定情報 -->
     <section id="faq-troubleshooting">
-      <h2>❓ 9. よくある質問・設定情報</h2>
+      <h2>❓ 10. よくある質問・設定情報</h2>
 
       <div class="card">
         <h4 style="color: #ffffff; margin-bottom: 8px;">Q. 設定やお気に入り・履歴データはどこに保存されますか？</h4>
@@ -1083,7 +1154,7 @@
           <code>C:\Users\&lt;ユーザー名&gt;\AppData\Roaming\Antigravity\FileSearchApp\config.json</code>
         </p>
         <p style="font-size: 0.9rem; color: var(--text-muted); margin-bottom: 0;">
-          ※ アプリを閉じても、最後に開いていたフォルダ、お気に入り、検索履歴（最大15件）、ソート状態、種別フィルタ、列幅、サイドバー開閉状態がそのまま復元されます。
+          ※ アプリを閉じても、最後に開いていたフォルダ、お気に入り、検索履歴（最大15件）、ソート状態、種別フィルタ、列幅、サイドバー開閉状態がそのまま復元されます。<strong>開いていたタブの枚数・構成だけは保存対象外</strong>で、次回起動時は常に1タブから始まります（検索したフォルダは履歴に残るため、そこから素早く再度開けます）。
         </p>
       </div>
 

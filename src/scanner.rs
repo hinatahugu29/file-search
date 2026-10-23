@@ -2,31 +2,28 @@ use crate::entry::FileEntry;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
-use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 /// 1回のUI通知にまとめる件数。小さすぎるとチャネル送信と再描画の回数が増える。
 const BATCH_SIZE: usize = 1000;
 
-static SCAN_SESSION_LOCK: Mutex<()> = Mutex::new(());
+/// 走査用スレッドプールを新規に作る。タブごとに1つ持たせることで、
+/// 複数タブを同時スキャンしたときにタブ間でワーカーを奪い合わない
+/// （別プロセスを2つ起動したときに近い、均等な進み方になる）。
+pub fn new_scan_thread_pool() -> Arc<rayon::ThreadPool> {
+    let available_threads = std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(2);
+    let scan_threads = available_threads.saturating_sub(1).clamp(2, 8);
 
-fn scan_thread_pool() -> Arc<rayon::ThreadPool> {
-    static SCAN_THREAD_POOL: OnceLock<Arc<rayon::ThreadPool>> = OnceLock::new();
-
-    Arc::clone(SCAN_THREAD_POOL.get_or_init(|| {
-        let available_threads = std::thread::available_parallelism()
-            .map(|count| count.get())
-            .unwrap_or(2);
-        let scan_threads = available_threads.saturating_sub(1).clamp(2, 8);
-
-        Arc::new(
-            rayon::ThreadPoolBuilder::new()
-                .num_threads(scan_threads)
-                .thread_name(|index| format!("file-scan-{index}"))
-                .build()
-                .expect("走査用スレッドプールを作成できませんでした"),
-        )
-    }))
+    Arc::new(
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(scan_threads)
+            .thread_name(|index| format!("file-scan-{index}"))
+            .build()
+            .expect("走査用スレッドプールを作成できませんでした"),
+    )
 }
 
 pub enum ScanMessage {
@@ -285,8 +282,14 @@ fn push_root_entry(path: &Path, ctx: &WalkContext) {
     ))]);
 }
 
-/// バックグラウンドで指定フォルダを高速並列走査（一時停止・再開・キャンセル対応）
-pub fn start_scan(root_path: String, tx: Sender<ScanMessage>, control: ScanControl) {
+/// バックグラウンドで指定フォルダを高速並列走査（一時停止・再開・キャンセル対応）。
+/// `pool` は呼び出し側（タブ）が持つ専用スレッドプールを渡す。
+pub fn start_scan(
+    root_path: String,
+    tx: Sender<ScanMessage>,
+    control: ScanControl,
+    pool: Arc<rayon::ThreadPool>,
+) {
     std::thread::spawn(move || {
         if control.is_cancelled.load(Ordering::Relaxed) {
             return;
@@ -300,19 +303,13 @@ pub fn start_scan(root_path: String, tx: Sender<ScanMessage>, control: ScanContr
             return;
         }
 
-        // パス検証は並行可能だが、走査本体は常に1世代だけ実行する。
-        let _session_guard = SCAN_SESSION_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if control.is_cancelled.load(Ordering::Relaxed) {
-            return;
-        }
+        // タブごとに専用のスレッドプールを使うため、他タブの走査と
+        // ワーカーを奪い合わず完全に並行して進む。
         if tx.send(ScanMessage::Validated(root_path.clone())).is_err() {
             return;
         }
 
         let start_time = Instant::now();
-        let pool = scan_thread_pool();
 
         // フォルダ切り替え直後などの一時的なルート読込失敗は一度だけ再試行する。
         for attempt in 0..2 {
